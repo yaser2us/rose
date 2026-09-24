@@ -186,7 +186,8 @@ cells:
               anthropic-version: 2023-06-01
             body:
               model: $model
-              max_tokens: 16000
+              max_tokens: 64000
+              stream: true
               system: |
                 You are the mind of a software organism. You grow new features by writing DNA.
                 The runtime (the ribosome) interprets a YAML genome; it has no feature code of
@@ -259,14 +260,17 @@ cells:
         on:
           received: locating
           failed: puzzled
-      locating: { do: { transform: { find: $reply.body.content, where: { type: text } } }, as: said, on: { done: reading, none: puzzled } }
-      reading: { do: { transform: { parse: $said.text } }, as: delta, on: { done: growing, none: puzzled } }
+      locating: { do: { sense: { subject: $reply.body, expect: "type:array" } }, on: { pass: streamed, fail: unstreamed } }
+      streamed: { do: { transform: { value: "$reply.body|where:data.delta.type:text_delta|map:data.delta.text|join:" } }, as: said, on: { done: reading, none: puzzled } }
+      unstreamed: { do: { transform: { find: $reply.body.content, where: { type: text } } }, as: block, on: { done: unwrapping, none: puzzled } }
+      unwrapping: { do: { transform: { value: $block.text } }, as: said, on: { done: reading, none: puzzled } }
+      reading: { do: { transform: { parse: $said } }, as: delta, on: { done: growing, none: puzzled } }
       growing: { do: { grow: { delta: $delta, phenotype: $phenotype, experience: $trial } }, as: child, on: { grown: celebrating, stillborn: mourning } }
       celebrating: { do: { signal: { log: "  🌳 evolved → ${child.version|yellow} ${child.file|dim}" } }, to: evolved }
       mourning: { do: { signal: { log: "  💀 stillborn: ${child.errors|join:; |red}" } }, to: weighing }
       weighing: { do: { sense: { subject: $attempt|default:0, expect: <2 } }, on: { pass: retrying, fail: extinct } }
       retrying: { do: { mind: { intent: $intent, model: $model, api: $api, trial: $trial, phenotype: $phenotype, attempt: $attempt|default:0|add:1, feedback: "$child.errors|join:; ", experience: $experience } }, as: child, on: { evolved: evolved, "*": extinct } }
-      puzzled: { do: { signal: { log: "  ✘ mind got no usable DNA: ${reply.status}${reply.error} ${reply.body.error.message}${delta.error}" } }, to: confused }
+      puzzled: { do: { signal: { log: "  ✘ mind got no usable DNA: ${reply.status}${reply.error} ${reply.body.error.message}${reply.body|where:event:error|map:data.error.message|join: } stop=${reply.body|where:event:message_delta|map:data.delta.stop_reason|join:} ${delta.error}" } }, to: confused }
     ends: [ evolved, extinct, confused ]
     fatal: [ extinct, confused ]
     output: $child

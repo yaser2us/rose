@@ -33,11 +33,15 @@ const setPath = (o: any, p: string, v: any) => {
 const typeOf = (v: any) => (Array.isArray(v) ? "array" : v === null ? "null" : typeof v);
 const isMap = (v: any): v is Record<string, any> => !!v && typeof v === "object" && !Array.isArray(v);
 const literal = (s: string) => { try { return JSON.parse(s); } catch { return s; } };
+const list = (v: any): any[] => (Array.isArray(v) ? v : []);
 const same = (a: any, b: any) => JSON.stringify(a) === JSON.stringify(b);
 const c = { g: (s: string) => `\x1b[32m${s}\x1b[0m`, r: (s: string) => `\x1b[31m${s}\x1b[0m`,
             d: (s: string) => `\x1b[2m${s}\x1b[0m`, y: (s: string) => `\x1b[33m${s}\x1b[0m` };
 const MAX_DEPTH = 3;
-const VOICE = new AsyncLocalStorage<string[]>();   // log lines of the UI action currently running
+const VOICE = new AsyncLocalStorage<string[]>();
+const LIVING = new Set<{ settle(): void }>();          // organisms whose bones must be saved before the process dies
+for (const sig of ["SIGINT", "SIGTERM"] as const)
+  process.on(sig, () => { LIVING.forEach((o) => o.settle()); process.exit(sig === "SIGINT" ? 130 : 143); });   // log lines of the UI action currently running
 const strip = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
 const MAX_STEPS = 10_000;
 
@@ -56,14 +60,14 @@ const FILTERS: Record<string, (v: any, ...a: string[]) => any> = {
   first: (v) => (Array.isArray(v) ? v[0] : v),
   last: (v) => (Array.isArray(v) ? v[v.length - 1] : v),
   reverse: (v) => (Array.isArray(v) ? [...v].reverse() : v),
-  sum: (v) => (v ?? []).reduce((a: number, b: any) => a + (+b || 0), 0),
+  sum: (v) => list(v).reduce((a: number, b: any) => a + (+b || 0), 0),
   add: (v, n) => (+v || 0) + +n,
-  map: (v, p) => (v ?? []).map((i: any) => get(i, p)),
-  where: (v, p, x) => (v ?? []).filter((i: any) => String(get(i, p)) === x),
+  map: (v, p) => list(v).map((i: any) => get(i, p)),
+  where: (v, p, x) => list(v).filter((i: any) => String(get(i, p)) === x),
   all: (v, p, x) => Array.isArray(v) && v.length > 0 && v.every((i: any) => String(get(i, p)) === x),
   eq: (v, x) => String(v) === x,
   pct: (v, n) => {
-    const s = [...(v ?? [])].map(Number).sort((a, b) => a - b);
+    const s = list(v).map(Number).sort((a, b) => a - b);
     return s[Math.min(s.length - 1, Math.floor((s.length * +n) / 100))];
   },
   mark: (v) => (v ? c.g("✔") : c.r("✘")),
@@ -169,7 +173,15 @@ function chemistry(org: Organism): Record<string, (a: any) => Reaction | Promise
         const h = body !== undefined ? { "content-type": "application/json", ...headers } : headers;
         const res = await fetch(url, { method, headers: h, body: body !== undefined ? JSON.stringify(body) : undefined });
         const text = await res.text();
-        let json: any; try { json = JSON.parse(text); } catch { json = text; }
+        let json: any;
+        if (String(res.headers.get("content-type")).includes("text/event-stream"))   // SSE → [{event, data}]
+          json = text.split(/\r?\n\r?\n/).filter((b) => b.trim()).map((b) => {
+            const ev: any = {};
+            for (const l of b.split(/\r?\n/)) { const i = l.indexOf(":"); if (i > 0) ev[l.slice(0, i)] = (ev[l.slice(0, i)] ?? "") + l.slice(i + 1).trimStart(); }
+            try { ev.data = JSON.parse(ev.data); } catch {}
+            return ev;
+          });
+        else { try { json = JSON.parse(text); } catch { json = text; } }
         return { event: "received", output: { status: res.status, headers: Object.fromEntries(res.headers.entries()),
                  body: json, time: Math.round(performance.now() - t0) } };
       } catch (e: any) { return { event: "failed", output: { error: e.cause?.code ?? e.message } }; }
@@ -234,7 +246,7 @@ function chemistry(org: Organism): Record<string, (a: any) => Reaction | Promise
           const request = { method: q.method, path: q.url?.split("?")[0], headers: q.headers, body };
           try {
             const { output: o = {} } = await org.run(a.cell, { ...(a.with ?? {}), request });
-            org.flush();   // what a server learns survives the process
+            org.flushSoon();   // what a server learns survives the process (batched: servers can be busy)
             s.writeHead(o.status ?? 200, { "content-type": "application/json", ...(o.headers ?? {}) }).end(JSON.stringify(o.body ?? null));
           } catch (e: any) { s.writeHead(500, { "content-type": "application/json" }).end(JSON.stringify({ error: e.message })); }
         });
@@ -407,6 +419,12 @@ class Organism {
               public depth: number, public prefix: string, public dir: string) {}
 
   flush = () => {};
+  private pending?: NodeJS.Timeout;
+  flushSoon() {
+    if (this.pending) return;
+    this.pending = setTimeout(() => { this.pending = undefined; this.flush(); }, 250);
+  }
+  settle() { if (this.pending) { clearTimeout(this.pending); this.pending = undefined; } this.flush(); }
   say(s: string) {
     VOICE.getStore()?.push(...s.split("\n"));
     console.log(s.split("\n").map((l) => this.prefix + l).join("\n"));
@@ -736,10 +754,11 @@ async function birth(genome: any, o: BirthOpts) {
     fs.writeFileSync(lockPath, JSON.stringify(lock, null, 2));
   };
 
+  LIVING.add(org);
   let r;
   try { r = await org.run(pheno.grow, { ...(pheno.with ?? {}), ...(o.with ?? {}), experience }); }
-  finally { if (!pheno.persist || o.trial) org.close(); }   // a trial never outlives its judgement
-  org.flush();
+  finally { if (!pheno.persist || o.trial) { org.close(); LIVING.delete(org); } }   // a trial never outlives its judgement
+  org.settle();
   return { ...r, fatal: (genome.cells[pheno.grow].fatal ?? []).includes(r.state), spent: budget.spent };
 }
 
