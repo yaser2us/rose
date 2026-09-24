@@ -1,5 +1,5 @@
-# 🧬 seed genome — adopted from .organism/genomes/postman-0.4.0.yaml (lineage: postman@0.3.0)
-genome: { name: postman, version: 0.4.0, parent: postman@0.3.0 }
+# 🧬 seed genome — adopted from .organism/genomes/postman-0.5.0.yaml (lineage: postman@0.4.0)
+genome: { name: postman, version: 0.5.0, parent: postman@0.4.0 }
 genes:
   signal: { params: [ method, url, headers, body, log ], emits: [ received, failed, sent ] }
   memory: { params: [ write, value, scope, write_all, read, fill, append, keep ], emits: [ written, read, missing ] }
@@ -300,10 +300,201 @@ cells:
       plain: { do: { signal: { log: "  📜 history: ${recorded|len} exchanges recorded" } }, to: done }
     ends: [ done ]
     output: $recorded
+  ad_hoc:
+    genes: [ memory, transform, signal ]
+    cells: [ http_call, record_exchange ]
+    input: [ method, url, headers, body, expect ]
+    lifecycle:
+      filling: { do: { memory: { fill: { method: $method|default:GET, url: $url, headers: $headers, body: $body } } }, as: request, to: firing }
+      firing: { do: { http_call: { request: $request, expect: "$expect|default:{}" } }, as: call, to: shaping }
+      shaping: { do: { transform: { value: { step: { name: "${method|default:GET} ${url}" }, ok: $call.state|eq:healthy, call: $call } } }, as: result, to: recording }
+      recording: { do: { record_exchange: { result: $result } }, as: recorded, to: logging }
+      logging: { do: { signal: { log: "  📮 ${method|default:GET} ${url} → ${call.response.status}${call.response.error} ${call.response.time|default:-}ms  ${call.state|dim}" } }, to: sent }
+    ends: [ sent ]
+    output:
+      state: $call.state
+      status: $call.response.status
+      time: $call.response.time
+      body: $call.response.body
+      headers: $call.response.headers
+      checks: $call.checks|default:[]
+      request: $request
+      recorded: $recorded
+    skin:
+      title: Request
+      icon: 📮
+      about: Send one ad-hoc request against the current environment and record it in history.
+      action: Send
+      badge: state
+      good: [ healthy ]
+      summary: ${status} · ${time}ms
+      fields:
+        method: { widget: choose, options: [ GET, POST, PUT, PATCH, DELETE ], default: GET, span: 2 }
+        url: { widget: text, span: 10, placeholder: "{{base}}/me" }
+        headers: json
+        body: json
+        expect: json
+      show:
+        - label: Body
+          path: body
+          as: auto
+        - label: Headers
+          path: headers
+          as: json
+        - label: Checks
+          path: checks
+          as: table
+          columns: { Target: target, Expect: expect, Actual: actual, Pass: pass }
+        - label: Request
+          path: request
+          as: json
+  collection_runner:
+    genes: [ memory ]
+    cells: [ runner, learner, historian ]
+    input: [ experience, parallel ]
+    lifecycle:
+      recalling: { do: { memory: { read: mutations, scope: dna } }, as: learned, to: running }
+      running: { do: { runner: { steps: $experience.steps, parallel: $parallel|default:1, learned: $learned } }, as: report, to: learning }
+      learning: { do: { learner: { report: $report, runs: 3 } }, to: historizing }
+      historizing: { do: { historian: { report: $report } }, as: history, to: done }
+    ends: [ done ]
+    output:
+      results: $report
+      healthy: $report|where:ok:true|len
+      total: $report|len
+      recorded: $history
+    skin:
+      title: Collection Runner
+      icon: 🏃
+      about: Run every step of the experience, learn from it and record the exchanges.
+      action: Run collection
+      summary: ${healthy}/${total} healthy
+      fields:
+        parallel: { widget: number, default: 1, span: 3, label: parallel }
+      show:
+        - label: Steps
+          path: results
+          as: table
+          columns: { Step: step.name, OK: ok, Status: call.response.status, Time: call.response.time, Senses: senses }
+        - label: Raw
+          path: results
+          as: json
+  history_view:
+    genes: [ memory, transform ]
+    lifecycle:
+      reading: { do: { memory: { read: history, scope: archive } }, as: log, on: { read: counting, missing: empty } }
+      counting: { do: { transform: { value: { entries: $log, newest: $log|last, total: $log|len } } }, as: view, to: shown }
+      empty: { do: { transform: { value: { entries: [], newest: {}, total: 0 } } }, as: view, to: shown }
+    ends: [ shown ]
+    output: $view
+    skin:
+      title: History
+      icon: 📜
+      about: Every request and response kept in the archive, newest first.
+      action: Refresh
+      auto: true
+      summary: ${total} exchanges · newest ${newest.method|default:-} ${newest.status|default:-}
+      show:
+        - label: Exchanges
+          path: entries
+          as: table
+          columns: { Step: step, Method: method, URL: url, Status: status, Time: time, OK: ok }
+        - label: Newest
+          path: newest
+          as: json
+  environment_view:
+    genes: [ memory, sense, transform ]
+    input: [ name, value, scope ]
+    lifecycle:
+      checking: { do: { sense: { subject: $name, expect: exists } }, on: { pass: setting, fail: reading_env } }
+      setting: { do: { memory: { write: $name, value: $value, scope: $scope|default:env } }, to: reading_env }
+      reading_env: { do: { memory: { read: "", scope: env } }, as: env, to: reading_collection }
+      reading_collection: { do: { memory: { read: "", scope: collection } }, as: collection, to: reading_global }
+      reading_global: { do: { memory: { read: "", scope: global } }, as: global, to: shaping }
+      shaping: { do: { transform: { value: { env: "$env|default:{}", collection: "$collection|default:{}", global: "$global|default:{}" } } }, as: vars, to: shown }
+    ends: [ shown ]
+    output: $vars
+    skin:
+      title: Environment
+      icon: 🌍
+      about: Inspect variables and optionally set one before showing them.
+      action: Apply
+      auto: true
+      summary: ${env|len} env · ${collection|len} collection · ${global|len} global
+      fields:
+        name: { widget: text, span: 4, placeholder: base, label: variable }
+        value: { widget: text, span: 5 }
+        scope: { widget: choose, options: [ env, collection, global ], default: env, span: 3 }
+      show:
+        - label: Env
+          path: env
+          as: json
+        - label: Collection
+          path: collection
+          as: json
+        - label: Global
+          path: global
+          as: json
+  evolver:
+    cells: [ mind ]
+    input: [ intent, model, api, trial, phenotype ]
+    lifecycle:
+      thinking: { do: { mind: { intent: $intent, model: $model, api: $api, trial: $trial, phenotype: $phenotype } }, as: child, on: { evolved: grown, "*": failed } }
+    ends: [ grown, failed ]
+    output:
+      state: $state
+      version: $child.version
+      file: $child.file
+      errors: $child.errors|default:[]
+    skin:
+      title: Evolve
+      icon: 🧬
+      about: Describe the next feature and let the mind grow this app's next version from inside itself.
+      action: Grow
+      badge: state
+      good: [ grown ]
+      summary: ${version|default:—} ${file|default:}
+      fields:
+        intent: { widget: textarea, span: 12, placeholder: add a screen that ... }
+      show:
+        - label: Child
+          path: version
+          as: text
+        - label: Errors
+          path: errors
+          as: json
+  studio:
+    genes: [ trigger, signal ]
+    cells: [ environment, mock, auth, ad_hoc, collection_runner, history_view, environment_view, evolver ]
+    input: [ experience, model, api, trial, phenotype ]
+    lifecycle:
+      seeding: { do: { environment: { vars: $experience.variables } }, to: mocking }
+      mocking: { do: { mock: { routes: $experience.mocks, port: $experience.mock_port } }, to: authing }
+      authing: { do: { auth: { login: $experience.auth } }, on: { "*": opening } }
+      opening:
+        do:
+          trigger:
+            on: ui
+            port: 4000
+            title: Postman
+            expose: [ ad_hoc, collection_runner, history_view, environment_view, evolver ]
+            with:
+              experience: $experience
+              model: $model
+              api: $api
+              trial: $trial
+              phenotype: $phenotype
+        on:
+          listening: announcing
+          failed: blocked
+      announcing: { do: { signal: { log: "  🛰  studio: Postman open on http://localhost:4000 (Ctrl+C to stop)" } }, to: open }
+    ends: [ open, blocked ]
+    fatal: [ blocked ]
 phenotypes:
   postman: { grow: postman, with: { parallel: 1 } }
   load_tester: { grow: postman, with: { parallel: 50 } }
   mock_server: { grow: mock_world, persist: true }
   evolve: { grow: mind, with: { intent: (pass --with intent=...), model: claude-opus-5, api: https://api.anthropic.com/v1/messages, trial: collection.yaml, phenotype: postman } }
   rehearse: { grow: rehearsal, with: { intent: record every request and response in a history, model: claude-opus-5, trial: collection.yaml, phenotype: postman } }
+  studio: { grow: studio, persist: true, with: { model: claude-opus-5, api: https://api.anthropic.com/v1/messages, trial: collection.yaml, phenotype: postman } }
 active_phenotype: postman
