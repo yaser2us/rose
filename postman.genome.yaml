@@ -1,0 +1,85 @@
+# ============================================================
+#  🧬 POSTMAN GENOME v0.2  (executable — the ribosome grows this)
+#  Law: every layer may ONLY be built from the layer below it.
+# ============================================================
+genome:
+  name: postman
+  version: 0.2.0
+
+# ── LAYER 1: GENES ─────────────────────────────────────────
+genes:
+  signal:    { params: [method, url, headers, body], emits: [received, failed] }
+  memory:    { params: [key, value, scope],           emits: [written] }
+  sense:     { params: [target, expect],              emits: [pass, fail] }
+  transform: { params: [input, expr],                 emits: [done] }
+  trigger:   { params: [on],                          emits: [fire] }
+
+# ── LAYER 2: CELLS (gene + lifecycle) ──────────────────────
+cells:
+  http_call:
+    genes: [signal, sense]
+    lifecycle:
+      idle:    { on: fire,     to: sending }
+      sending: { on: received, to: judging, else: failed }
+      judging: { on: pass,     to: healthy, else: sick }
+  variable:
+    genes: [memory]
+    lifecycle:
+      empty:   { on: written, to: holding }
+      holding: { on: written, to: holding }
+  extractor:
+    genes: [transform, memory]
+    lifecycle:
+      waiting:    { on: input, to: extracting }
+      extracting: { on: done,  to: stored }
+  clock:
+    genes: [trigger]
+    lifecycle:
+      sleeping: { on: fire, to: awake }
+      awake:    { on: done, to: sleeping }
+  responder:                       # an "inverted" http cell: listens instead of sends
+    genes: [sense, transform]
+    lifecycle:
+      listening:  { on: request, to: responding }
+      responding: { on: done,    to: listening }
+
+# ── LAYER 3: ORGANS (cells wired together) ─────────────────
+organs:
+  environment:
+    cells: [variable]
+  auth:
+    cells: [http_call, extractor, variable]
+    wiring:
+      - http_call.healthy -> extractor.input
+      - extractor.stored  -> variable(token)
+  runner:
+    cells: [clock, http_call, extractor]
+    wiring:
+      - clock.awake -> http_call[*].fire
+      - http_call.healthy -> extractor.input
+  mock:
+    cells: [responder]
+
+# ── LAYER 5: PHENOTYPES (same DNA, different species) ──────
+phenotypes:
+  postman:      { express: [environment, auth, runner, mock] }
+  load_tester:  { express: [environment, auth, runner, mock], runner.parallel: 50 }
+  mock_server:  { express: [environment, mock] }
+active_phenotype: postman
+
+# ── LAYER 6: MIND (dormant in ribosome v0.1) ───────────────
+mind:
+  perceives: [openapi_spec, past_runs, failures]
+  goals: [maximize coverage, maximize bugs_found, minimize requests]
+
+# ── LAYER 7: ACTION ────────────────────────────────────────
+action:
+  budget: { max_requests: 500 }
+
+# ── LAYER 8: LEARNING (the organism edits its own DNA) ─────
+learning:
+  mutations:
+    - { when: response_shape_stable, runs: 3, do: add_type_senses }
+    - { when: endpoint_flaky, threshold: 0.2, do: tag_flaky }       # dormant
+
+# ── INVARIANTS: enforced by the ribosome at birth ──────────

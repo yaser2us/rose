@@ -1,0 +1,39 @@
+# The organism's first "experience". Self-contained: it grows its own mock world.
+name: organism-self-test
+variables:
+  base: http://localhost:4010
+
+auth:
+  request: { method: POST, url: "{{base}}/login", body: { user: yasser, pass: dna } }
+  extract: body.token
+
+mocks:
+  - method: POST
+    path: /login
+    respond: { status: 200, body: { token: gene-7f3a, expires_in: 3600 } }
+  - method: GET
+    path: /me
+    require: { headers.authorization: "Bearer gene-7f3a" }
+    respond: { status: 200, body: { id: 42, name: Yasser, role: evangelist } }
+  - method: POST
+    path: /cells
+    respond: { status: 201, body: { id: 7, type: "$req.body.type", owner: "$req.body.owner", alive: true } }
+
+steps:
+  - name: Who am I
+    method: GET
+    url: "{{base}}/me"
+    headers: { Authorization: "Bearer {{token}}" }
+    expect: { status: 200, body.name: Yasser, time: "<500" }
+    extract: { user_id: body.id }
+
+  - name: Grow a cell
+    method: POST
+    url: "{{base}}/cells"
+    body: { type: neuron, owner: "{{user_id}}" }
+    expect: { status: 201, body.type: neuron }
+
+  - name: Intruder (no token)
+    method: GET
+    url: "{{base}}/me"
+    expect: { status: 401 }
