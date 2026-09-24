@@ -1,85 +1,260 @@
 # ============================================================
-#  🧬 POSTMAN GENOME v0.2  (executable — the ribosome grows this)
-#  Law: every layer may ONLY be built from the layer below it.
+#  🧬 POSTMAN GENOME v0.3  (the ribosome grows this; it knows nothing else)
+#
+#  One recursive unit: the CELL.
+#    cell := genes it may use + cells it may grow + a lifecycle
+#    each state `do`es ONE gene or cell call, binds the result `as` a name,
+#    and moves `to` the next state or follows `on: {event: state}`.
+#    Calling a cell runs it to one of its `ends`; that end is the event.
+#  An organ is a cell. Postman is a cell. The mind is a cell. Nothing else exists.
+#
+#  Wiring language:  "$a.b"  raw value · "text ${a.b}" interpolation · "|filter:arg"
+#  Fan-out:          do: { cell: {...}, for: { item: $list } }   sequential
+#                    do: { cell: {...}, times: 50 }             parallel
 # ============================================================
 genome:
   name: postman
-  version: 0.2.0
+  version: 0.3.0
 
-# ── LAYER 1: GENES ─────────────────────────────────────────
+# ── GENES: the only physics ─────────────────────────────────
 genes:
-  signal:    { params: [method, url, headers, body], emits: [received, failed] }
-  memory:    { params: [key, value, scope],           emits: [written] }
-  sense:     { params: [target, expect],              emits: [pass, fail] }
-  transform: { params: [input, expr],                 emits: [done] }
-  trigger:   { params: [on],                          emits: [fire] }
+  signal:    { params: [method, url, headers, body, log], emits: [received, failed, sent] }
+  memory:    { params: [write, value, scope, write_all, read, fill, append, keep], emits: [written, read, missing] }
+  sense:     { params: [subject, target, expect], emits: [pass, fail] }
+  transform: { params: [input, get, pick, merge, find, where, render, with, value, shape, prefix, stable, parse], emits: [done, none] }
+  trigger:   { params: [on, port, cell, with], emits: [listening] }
+  grow:      { params: [genome, delta, phenotype, experience, with], emits: [grown, stillborn] }   # F itself — the egg that lays eggs
 
-# ── LAYER 2: CELLS (gene + lifecycle) ──────────────────────
-cells:
-  http_call:
-    genes: [signal, sense]
-    lifecycle:
-      idle:    { on: fire,     to: sending }
-      sending: { on: received, to: judging, else: failed }
-      judging: { on: pass,     to: healthy, else: sick }
-  variable:
-    genes: [memory]
-    lifecycle:
-      empty:   { on: written, to: holding }
-      holding: { on: written, to: holding }
-  extractor:
-    genes: [transform, memory]
-    lifecycle:
-      waiting:    { on: input, to: extracting }
-      extracting: { on: done,  to: stored }
-  clock:
-    genes: [trigger]
-    lifecycle:
-      sleeping: { on: fire, to: awake }
-      awake:    { on: done, to: sleeping }
-  responder:                       # an "inverted" http cell: listens instead of sends
-    genes: [sense, transform]
-    lifecycle:
-      listening:  { on: request, to: responding }
-      responding: { on: done,    to: listening }
+# ── BODY: memory layout ─────────────────────────────────────
+body:
+  recall: [run, collection, env, global]     # lookup order for {{variables}}
+  bones:                                     # scopes that outlive a run (.organism/*.lock.json)
+    dna: heritable                           # changing it is a mutation → version bump
+    archive: kept
 
-# ── LAYER 3: ORGANS (cells wired together) ─────────────────
-organs:
-  environment:
-    cells: [variable]
-  auth:
-    cells: [http_call, extractor, variable]
-    wiring:
-      - http_call.healthy -> extractor.input
-      - extractor.stored  -> variable(token)
-  runner:
-    cells: [clock, http_call, extractor]
-    wiring:
-      - clock.awake -> http_call[*].fire
-      - http_call.healthy -> extractor.input
-  mock:
-    cells: [responder]
-
-# ── LAYER 5: PHENOTYPES (same DNA, different species) ──────
-phenotypes:
-  postman:      { express: [environment, auth, runner, mock] }
-  load_tester:  { express: [environment, auth, runner, mock], runner.parallel: 50 }
-  mock_server:  { express: [environment, mock] }
-active_phenotype: postman
-
-# ── LAYER 6: MIND (dormant in ribosome v0.1) ───────────────
-mind:
-  perceives: [openapi_spec, past_runs, failures]
-  goals: [maximize coverage, maximize bugs_found, minimize requests]
-
-# ── LAYER 7: ACTION ────────────────────────────────────────
+# ── ACTION: guardrails (a child may never exceed its parent) ─
 action:
   budget: { max_requests: 500 }
+  world: [ANTHROPIC_API_KEY]                 # the only outside secrets the organism may read
 
-# ── LAYER 8: LEARNING (the organism edits its own DNA) ─────
-learning:
-  mutations:
-    - { when: response_shape_stable, runs: 3, do: add_type_senses }
-    - { when: endpoint_flaky, threshold: 0.2, do: tag_flaky }       # dormant
+# ── CELLS ───────────────────────────────────────────────────
+cells:
 
-# ── INVARIANTS: enforced by the ribosome at birth ──────────
+  # ·· the atom of an API client ··
+  http_call:
+    genes: [signal, sense]
+    input: [request, expect]
+    lifecycle:
+      idle:    { to: sending }
+      sending: { do: { signal: $request }, as: response, on: { received: judging, failed: failed } }
+      judging: { do: { sense: { subject: $response, expect: $expect } }, as: checks, on: { pass: healthy, fail: sick } }
+    ends: [healthy, sick, failed]
+    output: { state: $state, trail: $trail, response: $response, checks: "$checks|default:[]" }
+
+  environment:
+    genes: [memory]
+    input: [vars]
+    lifecycle:
+      seeding: { do: { memory: { write_all: "$vars|default:{}", scope: env } }, to: ready }
+    ends: [ready]
+
+  auth:
+    genes: [sense, memory, transform, signal]
+    cells: [http_call]
+    input: [login]
+    lifecycle:
+      checking:   { do: { sense: { subject: $login, expect: exists } }, on: { pass: filling, fail: skipped } }
+      filling:    { do: { memory: { fill: $login.request } }, as: request, to: calling }
+      calling:    { do: { http_call: { request: $request, expect: { status: 200 } } }, as: call, on: { healthy: extracting, "*": refusing } }
+      extracting: { do: { transform: { input: $call.response, get: $login.extract } }, as: token, to: storing }
+      storing:    { do: { memory: { write: token, value: $token, scope: collection } }, to: announcing }
+      announcing: { do: { signal: { log: "  🔑 auth: token acquired ${call.trail|join:→|dim}" } }, to: authed }
+      refusing:   { do: { signal: { log: "  ${call.state|red} auth refused (${call.response.status}${call.response.error})" } }, to: failed }
+    ends: [authed, skipped, failed]
+    output: $call
+
+  run_step:
+    genes: [memory, transform, sense, signal]
+    cells: [http_call]
+    input: [step, parallel, learned]
+    lifecycle:
+      filling:     { do: { memory: { fill: { method: $step.method, url: $step.url, headers: $step.headers, body: $step.body } } }, as: request, to: recalling }
+      recalling:   { do: { transform: { input: $learned, get: $step.name } }, as: inherited, to: expecting }
+      expecting:   { do: { transform: { merge: [$inherited, $step.expect] } }, as: expect, to: firing }
+      firing:      { do: { http_call: { request: $request, expect: $expect }, times: "$parallel|default:1" }, as: calls, on: { healthy: extracting, "*": reporting } }
+      extracting:  { do: { transform: { input: $calls.0.response, pick: "$step.extract|default:{}" } }, as: extracted, to: storing }
+      storing:     { do: { memory: { write_all: $extracted, scope: run } }, to: reporting }
+      reporting:   { do: { sense: { subject: "$parallel|default:1", expect: ">1" } }, on: { pass: load_line, fail: line } }
+      line:        { do: { signal: { log: "  ${calls|all:state:healthy|mark} ${step.name|pad:22} ${calls.0.response.status|pad:5}${calls.0.response.error} ${calls.0.response.time|default:-}ms  ${calls.0.trail|join:→|dim}" } }, to: complaining }
+      load_line:   { do: { signal: { log: "  ${calls|all:state:healthy|mark} ${step.name|pad:22} ${calls.0.response.status|pad:5}${calls.0.response.error} p50 ${calls|map:response.time|pct:50}ms p95 ${calls|map:response.time|pct:95}ms ×${parallel}  ${calls.0.trail|join:→|dim}" } }, to: complaining }
+      complaining: { do: { signal: { log: "      ↳ ${check.target|red}: expected ${check.expect|json}, got ${check.actual|json}" }, for: { check: "$calls.0.checks|where:pass:false" } }, to: done }
+    ends: [done]
+    output: { step: $step, ok: "$calls|all:state:healthy", senses: "$calls.0.checks|len", call: $calls.0 }
+
+  runner:
+    genes: [signal]
+    cells: [run_step]
+    input: [steps, parallel, learned]
+    lifecycle:
+      spacing: { do: { signal: { log: "" } }, to: running }
+      running: { do: { run_step: { step: $step, parallel: $parallel, learned: $learned }, for: { step: $steps } }, as: results, to: summing }
+      summing: { do: { signal: { log: "\n  📊 coverage ${results|where:ok:true|len}/${results|len} healthy · ${results|map:senses|sum} senses fired" } }, to: done }
+    ends: [done]
+    output: $results
+
+  # ·· the mock world: an inverted http_call — it listens instead of sends ··
+  responder:
+    genes: [sense, transform]
+    input: [routes, request]
+    lifecycle:
+      routing:    { do: { transform: { find: $routes, where: { method: $request.method, path: $request.path } } }, as: route, on: { done: guarding, none: lost } }
+      guarding:   { do: { sense: { subject: $request, expect: $route.require } }, on: { pass: rendering, fail: refusing } }
+      rendering:  { do: { transform: { render: $route.respond.body, with: { req: $request } } }, as: body, to: answering }
+      answering:  { do: { transform: { value: { status: "$route.respond.status|default:200", body: $body } } }, as: reply, to: replied }
+      refusing:   { do: { transform: { value: { status: 401, body: { error: unauthorized } } } }, as: reply, to: replied }
+      lost:       { do: { transform: { value: { status: 404, body: { error: no such route } } } }, as: reply, to: replied }
+    ends: [replied]
+    output: $reply
+
+  mock:
+    genes: [trigger]
+    cells: [responder]
+    input: [routes, port]
+    lifecycle:
+      opening: { do: { trigger: { on: http, port: "$port|default:4010", cell: responder, with: { routes: "$routes|default:[]" } } }, to: open }
+    ends: [open]
+
+  # ·· learning: the organism writes its own assertions ··
+  learn_step:
+    genes: [transform, memory, sense, signal]
+    input: [result, runs]
+    lifecycle:
+      checking:    { do: { sense: { subject: $result.ok, expect: true } }, on: { pass: shaping, fail: skipped } }
+      shaping:     { do: { transform: { shape: $result.call.response.body, prefix: "body." } }, as: shape, on: { done: remembering, none: skipped } }
+      remembering: { do: { memory: { append: "shapes.${result.step.name}", value: $shape, scope: archive, keep: 10 } }, as: seen, to: weighing }
+      weighing:    { do: { transform: { input: $seen, stable: $runs } }, on: { done: recalling, none: skipped } }
+      recalling:   { do: { memory: { read: "mutations.${result.step.name}", scope: dna } }, on: { read: skipped, missing: mutating } }
+      mutating:    { do: { memory: { write: "mutations.${result.step.name}", value: $shape, scope: dna } }, to: announcing }
+      announcing:  { do: { signal: { log: "  🧪 mutation: '${result.step.name}' grew ${shape|len} type senses" } }, to: mutated }
+    ends: [mutated, skipped]
+    output: { state: $state }
+
+  learner:
+    genes: [sense, memory, signal]
+    cells: [learn_step]
+    input: [report, runs]
+    lifecycle:
+      studying:  { do: { learn_step: { result: $r, runs: $runs }, for: { r: $report } }, as: born, to: tallying }
+      tallying:  { do: { sense: { subject: "$born|where:state:mutated|len", expect: ">0" } }, on: { pass: done, fail: observing } }
+      observing: { do: { memory: { read: mutations, scope: dna } }, as: mutations, to: musing }
+      musing:    { do: { signal: { log: "  📚 learning: observing (${mutations|len} mutations inherited)" } }, to: done }
+    ends: [done]
+
+  # ·· whole organisms (roots a phenotype can grow) ··
+  postman:
+    genes: [memory]
+    cells: [environment, mock, auth, runner, learner]
+    input: [experience, parallel]
+    lifecycle:
+      seeding:   { do: { environment: { vars: $experience.variables } }, to: mocking }
+      mocking:   { do: { mock: { routes: $experience.mocks, port: $experience.mock_port } }, to: authing }
+      authing:   { do: { auth: { login: $experience.auth } }, on: { failed: dead, "*": recalling } }
+      recalling: { do: { memory: { read: mutations, scope: dna } }, as: learned, to: running }
+      running:   { do: { runner: { steps: $experience.steps, parallel: $parallel, learned: $learned } }, as: report, to: learning }
+      learning:  { do: { learner: { report: $report, runs: 3 } }, to: grown }
+    ends: [grown, dead]
+    fatal: [dead]
+    output: { report: $report }
+
+  mock_world:
+    genes: [signal]
+    cells: [environment, mock]
+    input: [experience]
+    lifecycle:
+      seeding:    { do: { environment: { vars: $experience.variables } }, to: opening }
+      opening:    { do: { mock: { routes: $experience.mocks, port: $experience.mock_port } }, to: announcing }
+      announcing: { do: { signal: { log: "  🪞 serving mocks on :${experience.mock_port|default:4010} (Ctrl+C to stop)" } }, to: serving }
+    ends: [serving]
+
+  # ·· the mind: reads its own genome, asks an LLM for a delta, grows the child ··
+  mind:
+    genes: [signal, memory, transform, sense, grow]
+    cells: [mind]                                   # it may try again with feedback — recursion
+    input: [intent, model, api, trial, phenotype, attempt, feedback]
+    lifecycle:
+      recalling:  { do: { memory: { read: genome, scope: self } }, as: dna, to: keying }
+      keying:     { do: { memory: { read: ANTHROPIC_API_KEY, scope: world } }, as: key, to: announcing }
+      announcing: { do: { signal: { log: "  💭 mind: \"${intent}\" (attempt ${attempt|default:0|add:1})" } }, to: asking }
+      asking:
+        do:
+          signal:
+            method: POST
+            url: $api
+            headers: { x-api-key: "$key|default:", anthropic-version: "2023-06-01" }
+            body:
+              model: $model
+              max_tokens: 16000
+              system: |
+                You are the mind of a software organism. You grow new features by writing DNA.
+                The runtime (the ribosome) interprets a YAML genome; it has no feature code of
+                its own. Your only lever is a genome DELTA.
+
+                OUTPUT: a single ```yaml fenced block containing a DELTA and nothing else.
+                A delta has the same top-level sections as the genome (genome, genes, body,
+                action, cells, phenotypes). Each entry you give REPLACES the entry of the same
+                name (a whole cell at a time); `null` deletes it; entries you omit are kept.
+                Always include `genome: { version: <higher than current> }`.
+
+                LANGUAGE (read the current genome for many worked examples):
+                - A cell has `genes` (subset of the six genes), `cells` (other cells it may
+                  call), `input` (names it accepts), `lifecycle` (ordered states; the first is
+                  the entry), `ends` (terminal states), optional `fatal`, optional `output`.
+                - A state: `do: { <gene-or-cell>: <args> }`, optional `as: name` binding the
+                  result, then EITHER `to: next` OR `on: { <event>: next, "*": next }`.
+                  A gene's events are its `emits`. A cell's events are its `ends`.
+                  Fan-out: add `for: { item: $list }` (sequential) or `times: N` (parallel);
+                  the result is a list and the event is the shared event or `mixed`/`none`.
+                - Wiring: a string that is exactly `$name.path` is the raw value; `$${name.path}`
+                  inside text interpolates. Filters: default pad json yaml join len keys first
+                  last sum add map where all eq pct mark green red dim yellow (e.g.
+                  `$${list|len}`, `"$x|default:0"`). Every `$name` must be an input, an `as`
+                  binding, a `for` variable, or `state`/`trail`.
+                - Gene args must be among the gene's declared params. Cell args must be among
+                  the callee's `input`.
+                - Memory scopes: recall chain + bones. `dna` is heritable, `archive` is kept.
+                The runtime rejects any delta that breaks these laws, and tells you why.
+              messages:
+                - role: user
+                  content: "INTENT:\n${intent}\n\nFEEDBACK FROM YOUR LAST ATTEMPT:\n${feedback|default:none}\n\nYOUR CURRENT GENOME:\n${dna}"
+        as: reply
+        on: { received: locating, failed: puzzled }
+      locating:   { do: { transform: { find: $reply.body.content, where: { type: text } } }, as: said, on: { done: reading, none: puzzled } }
+      reading:    { do: { transform: { parse: $said.text } }, as: delta, on: { done: growing, none: puzzled } }
+      growing:    { do: { grow: { delta: $delta, phenotype: $phenotype, experience: $trial } }, as: child, on: { grown: celebrating, stillborn: mourning } }
+      celebrating: { do: { signal: { log: "  🌳 evolved → ${child.version|yellow} ${child.file|dim}" } }, to: evolved }
+      mourning:   { do: { signal: { log: "  💀 stillborn: ${child.errors|join:; |red}" } }, to: weighing }
+      weighing:   { do: { sense: { subject: "$attempt|default:0", expect: "<2" } }, on: { pass: retrying, fail: extinct } }
+      retrying:   { do: { mind: { intent: $intent, model: $model, api: $api, trial: $trial, phenotype: $phenotype, attempt: "$attempt|default:0|add:1", feedback: "$child.errors|join:; " } }, as: child, on: { evolved: evolved, "*": extinct } }
+      puzzled:    { do: { signal: { log: "  ✘ mind got no usable DNA: ${reply.status}${reply.error} ${reply.body.error.message}${delta.error}" } }, to: confused }
+    ends: [evolved, extinct, confused]
+    fatal: [extinct, confused]
+    output: $child
+
+  # ·· offline dress rehearsal: a mock plays the LLM, the rest is real ··
+  rehearsal:
+    cells: [mock, mind]
+    input: [experience, intent, model, trial, phenotype]
+    lifecycle:
+      staging:  { do: { mock: { routes: $experience.mocks, port: $experience.mock_port } }, to: thinking }
+      thinking: { do: { mind: { intent: $intent, model: $model, api: "http://localhost:${experience.mock_port}/v1/messages", trial: $trial, phenotype: $phenotype } }, on: { evolved: done, "*": failed } }
+    ends: [done, failed]
+    fatal: [failed]
+
+# ── PHENOTYPES: same DNA, different species ─────────────────
+phenotypes:
+  postman:     { grow: postman, with: { parallel: 1 } }
+  load_tester: { grow: postman, with: { parallel: 50 } }
+  mock_server: { grow: mock_world, persist: true }
+  evolve:      { grow: mind, with: { intent: "(pass --with intent=...)", model: claude-opus-5, api: "https://api.anthropic.com/v1/messages", trial: collection.yaml, phenotype: postman } }
+  rehearse:    { grow: rehearsal, with: { intent: "record every request and response in a history", model: claude-opus-5, trial: collection.yaml, phenotype: postman } }
+active_phenotype: postman
