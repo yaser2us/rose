@@ -490,6 +490,11 @@ class Organism {
 
     const dir = path.join(this.dir, "genomes");
     fs.mkdirSync(dir, { recursive: true });
+    const taken = (v: string) => [".yaml", ".stillborn.yaml"].some((x) => fs.existsSync(path.join(dir, `${child.genome.name}-${v}${x}`)));
+    while (taken(child.genome.version)) {   // growth never overwrites an earlier child
+      const [x, y] = String(child.genome.version).split(".").map(Number);
+      child.genome.version = `${x}.${(y || 0) + 1}.0`;
+    }
     const file = path.join(dir, `${child.genome.name}-${child.genome.version}.yaml`);
     fs.writeFileSync(file, `# grown by ${me.name}@${me.version} — reversible: delete this file to undo\n` + dnaText(child));
     this.say(c.d(`  🥚 ${child.genome.name}@${child.genome.version} laid at ${file}`));
