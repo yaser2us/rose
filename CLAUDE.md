@@ -37,7 +37,7 @@ npm run load       # phenotype load_tester (50 parallel calls per step)
 npm run mock       # phenotype mock_server (keeps serving)
 npm run strict     # grow, but first prove the kernel mentions no genome-defined name
 npm run rehearse   # the mind grows a child genome offline (a mock plays the LLM)
-ANTHROPIC_API_KEY=… npm run evolve -- --with intent="add a history of every request"
+npm run evolve -- --with intent="add a history of every request"
 npx tsx ribosome.ts .organism/genomes/postman-0.4.0.yaml collection.yaml   # run a grown child
 ```
 
@@ -125,9 +125,11 @@ A literal (deep equality), `exists`, `type:string|number|boolean|object|array|nu
 - `--strict` passes: there is no `fire()`, no `ORGAN_FOLDS`, and no cell name in the kernel.
 - Offline self-growth: `rehearse` grows `postman@0.4.0` with a new `history` cell. That child can run directly and can grow `0.5.0` itself.
 - Broken DNA is rejected with precise errors, and the mind retries using those errors as feedback.
+- **Real self-growth (verified 2026-09-24):** `npm run evolve` with a "history" intent got a valid delta from `claude-opus-5` on the first attempt, in about 30s. It added the `historian` and `record_exchange` cells, and changed `http_call` to expose its request. The child ran with real exchanges archived. No human wrote any YAML or TypeScript for it.
+- **API key:** read from `ANTHROPIC_API_KEY`, falling back to `CLAUDE_API_KEY`. npm scripts load `.env` (gitignored) through Node's `--env-file-if-exists`.
 
 **Not yet:**
-1. **The real LLM mind has not been run.** `npm run evolve` is wired to `api.anthropic.com` using `claude-opus-5`, but no key was available. Expect prompt tuning, since the primer lives in the `mind` cell's `system` text.
+1. **The mind has one successful run so far.** Harder intents will need primer tuning, since the primer lives in the `mind` cell's `system` text.
 2. **No GUI skin.** Output is CLI log lines written in YAML. This is the biggest gap to "a Postman application".
 3. **Fitness is only "born and didn't die".** Nothing yet decides whether a mutation is *better*.
 4. **Adoption is manual.** A grown genome stays in `.organism/genomes/` until you copy it over the seed.

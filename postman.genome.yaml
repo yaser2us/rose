@@ -35,7 +35,7 @@ body:
 # ── ACTION: guardrails (a child may never exceed its parent) ─
 action:
   budget: { max_requests: 500 }
-  world: [ANTHROPIC_API_KEY]                 # the only outside secrets the organism may read
+  world: [ANTHROPIC_API_KEY, CLAUDE_API_KEY] # the only outside secrets the organism may read
 
 # ── CELLS ───────────────────────────────────────────────────
 cells:
@@ -183,7 +183,8 @@ cells:
     input: [intent, model, api, trial, phenotype, attempt, feedback]
     lifecycle:
       recalling:  { do: { memory: { read: genome, scope: self } }, as: dna, to: keying }
-      keying:     { do: { memory: { read: ANTHROPIC_API_KEY, scope: world } }, as: key, to: announcing }
+      keying:     { do: { memory: { read: ANTHROPIC_API_KEY, scope: world } }, as: key, on: { read: announcing, missing: keying_alt } }
+      keying_alt: { do: { memory: { read: CLAUDE_API_KEY, scope: world } }, as: key, to: announcing }
       announcing: { do: { signal: { log: "  💭 mind: \"${intent}\" (attempt ${attempt|default:0|add:1})" } }, to: asking }
       asking:
         do:
