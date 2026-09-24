@@ -327,6 +327,23 @@ function purity(g: any): string[] {
     .map((n) => `kernel mentions '${n}', a name only the genome may define`);
 }
 
+/** DNA as text: one line per state / gene / phenotype when it fits, blocks otherwise. */
+function dnaText(g: any) {
+  const doc = new YAML.Document(g);
+  YAML.visit(doc, {
+    Seq(_, n) { if (n.items.every((i) => YAML.isScalar(i))) n.flow = true; },
+    Pair(_, pair, path) {
+      const k = [...path.filter(YAML.isPair).map((p: any) => p.key?.value), (pair.key as any)?.value];
+      const small = JSON.stringify((pair.value as any)?.toJSON?.() ?? "").length <= 240;
+      const line = k.length === 1 ? k[0] === "genome"
+        : k.length === 2 ? ["genes", "phenotypes"].includes(k[0])
+        : k[0] === "cells" && ((k.length === 4 && k[2] === "lifecycle") || (k.length === 5 && k[2] === "skin"));
+      if (line && small && YAML.isMap(pair.value)) pair.value.flow = true;
+    },
+  });
+  return doc.toString({ lineWidth: 0 });
+}
+
 /** a + b = ab : splice a delta into a genome, section by section (null deletes). */
 function splice(g: any, delta: any) {
   const out = structuredClone(g);
@@ -435,7 +452,7 @@ class Organism {
     const dir = path.join(this.dir, "genomes");
     fs.mkdirSync(dir, { recursive: true });
     const file = path.join(dir, `${child.genome.name}-${child.genome.version}.yaml`);
-    fs.writeFileSync(file, `# grown by ${me.name}@${me.version} — reversible: delete this file to undo\n` + YAML.stringify(child));
+    fs.writeFileSync(file, `# grown by ${me.name}@${me.version} — reversible: delete this file to undo\n` + dnaText(child));
     this.say(c.d(`  🥚 ${child.genome.name}@${child.genome.version} laid at ${file}`));
 
     try {
@@ -476,7 +493,7 @@ async function birth(genome: any, o: BirthOpts) {
   // bones: memory scopes that outlive the run. "heritable" ones are DNA: changing them is a mutation.
   const bones: Record<string, string> = genome.body?.bones ?? {};
   const seed: Record<string, any> = {
-    self: { genome: YAML.stringify(genome), name: genome.genome.name, version: v },
+    self: { genome: dnaText(genome), name: genome.genome.name, version: v },
     world: Object.fromEntries((genome.action?.world ?? []).map((k: string) => [k, process.env[k]]).filter(([, x]: any) => x !== undefined)),
   };
   for (const b of Object.keys(bones)) seed[b] = structuredClone(lock.bones?.[b] ?? {});
@@ -514,6 +531,17 @@ async function main() {
   const phenotype = take("--phenotype");
   const withArgs: Record<string, any> = {};
   for (let w; (w = take("--with")) !== undefined; ) { const i = w.indexOf("="); withArgs[w.slice(0, i)] = literal(w.slice(i + 1)); }
+  const adopt = take("--adopt");
+  if (adopt) {   // --adopt <grown.yaml> <seed.yaml>: a child becomes the new seed (git is the undo)
+    const seedPath = args[0];
+    if (!seedPath) throw new Error("usage: ribosome.ts --adopt <grown.yaml> <seed.yaml>");
+    const child = YAML.parse(fs.readFileSync(adopt, "utf8"));
+    const errs = laws(child);
+    if (errs.length) throw new Error("💀 refusing to adopt — laws violated:\n  " + errs.join("\n  "));
+    fs.writeFileSync(seedPath, `# 🧬 seed genome — adopted from ${adopt} (lineage: ${child.genome.parent ?? "none"})\n` + dnaText(child));
+    console.log(c.y(`  🧬 adopted ${child.genome.name}@${child.genome.version} as ${seedPath}`));
+    return;
+  }
   const strict = args.includes("--strict") && !!args.splice(args.indexOf("--strict"), 1);
   const [genomePath, experiencePath] = args;
   if (!genomePath || !experiencePath) throw new Error("usage: ribosome.ts <genome.yaml> <experience.yaml> [--phenotype p] [--with k=v] [--strict]");
