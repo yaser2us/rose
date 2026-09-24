@@ -233,7 +233,7 @@ The `Memory` class holds named **scopes**, which are created on demand.
 | Scope | Filled by | Lifetime |
 |---|---|---|
 | `run`, `collection`, `env`, `global` | Cells (`environment` seeds `env`; `auth` writes the `token` into `collection`) | One organism lifetime |
-| `self` | The kernel: `{ genome (as text), name, version }` | Read-only in practice; this is how the mind reads its own DNA |
+| `self` | The kernel: `{ genome (as text), name, version, physics }` | Read-only in practice; this is how the mind reads its own DNA |
 | `world` | The kernel: only the env vars listed in `action.world` | Secrets such as the API key |
 | **Bones** (from `body.bones`) | Cells | **Persisted** in `.organism/<experience>.lock.json` |
 
@@ -330,7 +330,8 @@ flowchart LR
 
 - The mind is an ordinary cell. It talks to Claude through the plain `signal` gene: an HTTP POST to `/v1/messages` with the `x-api-key` and `anthropic-version` headers. The kernel doesn't know Claude exists.
 - The **primer** is the `system` text inside the mind cell. It teaches the LLM the genome language, so the mind can rewrite its own primer too.
-- The prompt contains the intent, feedback from the last attempt, the **trial experience** (as YAML, so tests use real data and ports), and the organism's own genome.
+- The prompt contains the intent, feedback from the last attempt, the **trial experience** (as YAML, so tests use real data and ports), the **kernel's exact vocabulary** (`self.physics`), and the organism's own genome.
+- The request is **streamed** (`stream: true`, `max_tokens: 64000`). `signal` turns the server-sent events into a list, and the mind joins the `text_delta` pieces.
 - The LLM returns a **delta**: only the entries to add or replace, as a fenced YAML block.
 
 ### The `grow` gene (kernel: `Organism.growChild`)
@@ -414,12 +415,17 @@ To prove the kernel isn't Postman in disguise, a second species was grown from `
 | `hub@0.1.0` | (the egg) | 1 cell: `mind` |
 | `hub@0.2.0` | "Grow into a webhook inspector" | 6 cells: a catch-all server, an inbox and a self-test. Stillborn 3× first, which exposed builder gaps (below); grew once those were fixed. |
 | `hub@0.3.0` | "Add automations that transform and forward webhooks" | 9 cells. Automations are **data** (`when` sense map + `send` template), rendered with `$req.…` and delivered with `signal`, then logged to `archive.deliveries`. First attempt, about 3 min. |
+| `hub@0.4.0` | "Give yourself a web UI" | 17 cells, `studio` phenotype on :4101: Inbox, Automations (add/replace at runtime, no LLM), Test webhook, Deliveries. Second attempt, about 8 min (streamed). |
+| `hub@0.4.1` | "Newest-first is wrong; use `\|reverse`" | Deleted its hand-made `flip` cells and used the kernel filter. 18 s. |
 
 **Builder gaps this second species exposed (all fixed in the builder, not the app):**
 - The egg had no worked examples of fan-out, and the primer never said `for` goes *inside* `do`. The primer is now explicit, and a new law rejects unknown state keys with a hint.
 - The mind never saw the experience file, so it invented its own test data. The prompt now includes it, and the primer states the `experience` input convention.
 - Long-running servers only saved bones at startup, so data from HTTP requests was lost when the process stopped. Bones are now flushed after every inbound request.
 - A trial birth of a `persist` phenotype would never exit. Trials now always close their servers.
+- A large delta (a whole UI) ran out of output tokens: the reply had thinking but no text. `signal` now parses `text/event-stream`, and the mind streams with `max_tokens: 64000`, stitching `text_delta` events (with a fallback for plain JSON replies).
+- The primer's filter list was hand-written and went stale (no `reverse`), so the mind wrote a buggy `flip` cell. The kernel now publishes its exact vocabulary in `self.physics` (genes, filters, state keys, skin keys, widgets), and the mind's prompt includes it.
+- Saving bones after every request made servers slow under load (p95 578 ms). Saves are now batched every 250 ms and settled on SIGINT/SIGTERM.
 
 Run it: `npx tsx ribosome.ts .organism/genomes/hub-0.3.0.yaml hub.yaml --phenotype serve` (or `selftest`).
 
@@ -488,6 +494,7 @@ ARCHITECTURE.md             this document
 ## 17. Limits and next steps
 
 - **Fitness is only "born and didn't die".** Nothing yet scores whether a child is better than its parent.
+- **Trials share ports with running apps.** A child's self-test needs the same ports as a running studio, so Evolve can't be offered inside a running hub, and trials here used a copy of the experience on port 4200. Isolated trial ports would fix this.
 - **No hot-swap.** Evolve grows a child file, but the running studio keeps its own genome until it's restarted, or until you `--adopt`.
 - **Port collisions are easy to miss.** If :4000 is taken, the studio ends in its fatal `blocked` state (exit code 1), but it prints no message, and whatever already holds the port keeps answering. The `blocked` path should log a clear line.
 - **Growing the kernel's vocabulary** (filters, transform operations, widgets) is the main risk to keeping it generic. Add one only when no combination of existing ones can do the job.

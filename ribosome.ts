@@ -725,7 +725,9 @@ async function birth(genome: any, o: BirthOpts) {
   // bones: memory scopes that outlive the run. "heritable" ones are DNA: changing them is a mutation.
   const bones: Record<string, string> = genome.body?.bones ?? {};
   const seed: Record<string, any> = {
-    self: { genome: dnaText(genome), name: genome.genome.name, version: v },
+    self: { genome: dnaText(genome), name: genome.genome.name, version: v,   // the organism may read its DNA and its physics
+            physics: { genes: CHEMISTRY, filters: Object.keys(FILTERS), state_keys: ["do", "as", "to", "on"],
+                       skin: { keys: SKIN_KEYS, field_keys: FIELD_KEYS, widgets: WIDGETS, show_as: SHOW_AS } } },
     world: Object.fromEntries((genome.action?.world ?? []).map((k: string) => [k, process.env[k]]).filter(([, x]: any) => x !== undefined)),
   };
   for (const b of Object.keys(bones)) seed[b] = structuredClone(lock.bones?.[b] ?? {});

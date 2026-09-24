@@ -172,7 +172,8 @@ cells:
     cells: [ mind ]
     input: [ intent, model, api, trial, phenotype, attempt, feedback, experience ]
     lifecycle:
-      recalling: { do: { memory: { read: genome, scope: self } }, as: dna, to: keying }
+      recalling: { do: { memory: { read: genome, scope: self } }, as: dna, to: sensing }
+      sensing: { do: { memory: { read: physics, scope: self } }, as: physics, to: keying }
       keying: { do: { memory: { read: ANTHROPIC_API_KEY, scope: world } }, as: key, on: { read: announcing, missing: keying_alt } }
       keying_alt: { do: { memory: { read: CLAUDE_API_KEY, scope: world } }, as: key, to: announcing }
       announcing: { do: { signal: { log: '  💭 mind: "${intent}" (attempt ${attempt|default:0|add:1})' } }, to: asking }
@@ -253,6 +254,9 @@ cells:
 
                     THE EXPERIENCE YOUR CHILD IS TESTED WITH (phenotype ${phenotype}, file ${trial}):
                     ${experience|yaml}
+
+                    THE KERNEL'S EXACT VOCABULARY (use nothing else; e.g. the |reverse filter reverses a list):
+                    ${physics|yaml}
 
                     YOUR CURRENT GENOME:
                     ${dna}
