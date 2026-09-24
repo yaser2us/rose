@@ -37,6 +37,8 @@ npm run load       # phenotype load_tester (50 parallel calls per step)
 npm run mock       # phenotype mock_server (keeps serving)
 npm run strict     # grow, but first prove the kernel mentions no genome-defined name
 npm run rehearse   # the mind grows a child genome offline (a mock plays the LLM)
+npm run studio     # the grown UI at http://localhost:4000 (needs a genome with a `studio` phenotype)
+npx tsx ribosome.ts --adopt .organism/genomes/<child>.yaml postman.genome.yaml   # make a child the seed
 npm run evolve -- --with intent="add a history of every request"
 npx tsx ribosome.ts .organism/genomes/postman-0.4.0.yaml collection.yaml   # run a grown child
 ```
@@ -86,7 +88,7 @@ http_call:
 | `memory` | `write`, `write_all`, `read`, `append` (+`keep`), `fill` | written, read, missing |
 | `sense` | `subject` + `expect` (a map means all must pass) | pass, fail |
 | `transform` | `get`, `pick`, `merge`, `find`/`where`, `render`/`with`, `value`, `shape`, `stable`, `parse` (YAML) | done, none |
-| `trigger` | `on: http`, `port`, `cell`: grows `cell` once per inbound request | listening |
+| `trigger` | `on: http`, `port`, `cell`: grows `cell` once per inbound request. `on: ui`, `port`, `title`, `expose`, `with`: serves the skin | listening, failed |
 | `grow` | `delta` (or `genome`), `phenotype`, `experience`: splices, checks the laws, saves, and births a child | grown, stillborn |
 
 `grow` is the sixth gene, added on purpose: it is F handed back to the genome, which closes the loop.
@@ -97,6 +99,19 @@ http_call:
 - `body.recall` sets the `{{var}}` lookup order.
 - `body.bones` scopes persist in the lock file. `heritable` bones (`dna`) are DNA, so any change bumps the lock version.
 - The kernel seeds two more scopes: `self` (the organism's own genome text) and `world` (only the env vars allowlisted in `action.world`).
+
+### Skin (the UI is DNA too)
+
+`trigger: { on: ui, expose: [cells], with: {...} }` serves one generic page from the kernel (`SKIN_HTML`):
+- each exposed cell becomes a screen;
+- the form comes from its `input`, shaped by `skin.fields`;
+- the button runs the cell, with the UI's values plus `with` as its input;
+- the panel renders its `output`, shaped by `skin.show` (tabs: `auto|json|table|text`, with `columns`);
+- `summary` is wiring evaluated over the output; `badge` + `good` control the status pill;
+- log lines a click produces show up in a Console tab;
+- memory persists across clicks, and bones are flushed after every action.
+
+`skinLaws()` rejects unknown keys, unknown widgets and fields that aren't inputs. The page knows cells, inputs and outputs, never what they mean. Deep links work as `/#<cell>`.
 
 ### Sense grammar
 
@@ -128,11 +143,13 @@ A literal (deep equality), `exists`, `type:string|number|boolean|object|array|nu
 - **Real self-growth (verified 2026-09-24):** `npm run evolve` with a "history" intent got a valid delta from `claude-opus-5` on the first attempt, in about 30s. It added the `historian` and `record_exchange` cells, and changed `http_call` to expose its request. The child ran with real exchanges archived. No human wrote any YAML or TypeScript for it.
 - **API key:** read from `ANTHROPIC_API_KEY`, falling back to `CLAUDE_API_KEY`. npm scripts load `.env` (gitignored) through Node's `--env-file-if-exists`.
 
+- **The mind grew the Postman UI (2026-09-24):** an intent describing 5 screens (Request, Collection Runner, History, Environment, Evolve) produced `postman@0.5.0` with 6 new cells and a `studio` phenotype. Attempt 1 was stillborn (it broke its own `mind` cell; the laws caught it), attempt 2 grew. Every screen works, verified over the API and by screenshot.
+
 **Not yet:**
 1. **The mind has one successful run so far.** Harder intents will need primer tuning, since the primer lives in the `mind` cell's `system` text.
-2. **No GUI skin.** Output is CLI log lines written in YAML. This is the biggest gap to "a Postman application".
+2. **Skin v1 is generic forms and panels.** There is no drag-and-drop collection editing, no tabs of open requests, no saved requests. Each would be grown as cells, plus possibly a few new widgets or `as:` renderers in the kernel.
 3. **Fitness is only "born and didn't die".** Nothing yet decides whether a mutation is *better*.
-4. **Adoption is manual.** A grown genome stays in `.organism/genomes/` until you copy it over the seed.
+4. **Adoption is a command, not automatic.** Use `--adopt`, which checks the child against the laws before it replaces the seed. The Evolve screen grows children but can't yet hot-swap the running app.
 5. **Kernel vocabulary creep.** Filters and transform operations are the part of the kernel most likely to bloat. Add one only when no composition of existing ones can do the job.
 
 ## Roadmap
@@ -141,9 +158,9 @@ A literal (deep equality), `exists`, `type:string|number|boolean|object|array|nu
    - Run `evolve` against the real API.
    - Harden the primer.
    - Add a `sense` step so the mind checks the child's *output* (e.g. coverage), not just survival.
-2. **Skin from DNA**
-   - Add a render gene (or `trigger: { on: ui }`), so cells can expose inputs, outputs and actions, and the body renders a UI from them: request editor, response panel, environments, history.
-   - The UI must be grown from the genome, not hand-built.
+2. **Richer skin**
+   - Hot-swap: let Evolve adopt the child into the running studio.
+   - Saved requests and collections as memory, edited from the UI.
 3. **Fitness + selection**
    - Score children (coverage, failures found, noise, size of DNA).
    - Keep winners and archive losers.

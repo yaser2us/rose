@@ -5,7 +5,7 @@ genes:
   memory: { params: [ write, value, scope, write_all, read, fill, append, keep ], emits: [ written, read, missing ] }
   sense: { params: [ subject, target, expect ], emits: [ pass, fail ] }
   transform: { params: [ input, get, pick, merge, find, where, render, with, value, shape, prefix, stable, parse ], emits: [ done, none ] }
-  trigger: { params: [ on, port, cell, with ], emits: [ listening ] }
+  trigger: { params: [ on, port, cell, with, expose, title ], emits: [ listening, failed ] }
   grow: { params: [ genome, delta, phenotype, experience, with ], emits: [ grown, stillborn ] }
 body:
   recall: [ run, collection, env, global ]
@@ -215,6 +215,24 @@ cells:
                 - Gene args must be among the gene's declared params. Cell args must be among
                   the callee's `input`.
                 - Memory scopes: recall chain + bones. `dna` is heritable, `archive` is kept.
+                  `memory: { read: "", scope: env }` reads a whole scope.
+                - Servers: `trigger: { on: http, port, cell, with }` grows `cell` per request
+                  (input `request`, output `{status, body}`). Emits `listening` or `failed`
+                  (port taken). A phenotype with `persist: true` keeps its servers alive.
+                - SKIN (the UI is DNA too): `trigger: { on: ui, port, title, expose: [cells], with: {...} }`
+                  serves a web app. Each exposed cell becomes a screen: a form built from its
+                  inputs, a button that runs it (UI values + `with` become its input), and a
+                  panel showing its output. Memory persists across clicks. Shape a screen with
+                  an optional `skin` on the cell:
+                    title, icon (one emoji), about (one sentence), action (button label),
+                    auto (true = run when opened), summary ("$${a} · $${b|len}" over the output),
+                    badge (output path shown as the status pill), good (badge values shown green),
+                    fields: { <input>: text|textarea|json|number  or  { widget, options (for
+                      widget: choose), default, placeholder, label, span: 1-12 grid columns } }
+                      Only listed fields are shown; omit `fields` to show every input.
+                    show: [ { label, path (into the output), as: auto|json|table|text,
+                      columns: { <Header>: <path in each row> } } ]  (rendered as tabs)
+                  Log lines a click produces appear in a Console tab.
                 The runtime rejects any delta that breaks these laws, and tells you why.
               messages:
                 - role: user

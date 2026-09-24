@@ -16,6 +16,7 @@ import fs from "node:fs";
 import path from "node:path";
 import http from "node:http";
 import { fileURLToPath } from "node:url";
+import { AsyncLocalStorage } from "node:async_hooks";
 import YAML from "yaml";
 
 // ─────────────────────────── utils ───────────────────────────
@@ -36,6 +37,8 @@ const same = (a: any, b: any) => JSON.stringify(a) === JSON.stringify(b);
 const c = { g: (s: string) => `\x1b[32m${s}\x1b[0m`, r: (s: string) => `\x1b[31m${s}\x1b[0m`,
             d: (s: string) => `\x1b[2m${s}\x1b[0m`, y: (s: string) => `\x1b[33m${s}\x1b[0m` };
 const MAX_DEPTH = 3;
+const VOICE = new AsyncLocalStorage<string[]>();   // log lines of the UI action currently running
+const strip = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
 const MAX_STEPS = 10_000;
 
 // ─────────────── WIRING LANGUAGE ───────────────
@@ -52,6 +55,7 @@ const FILTERS: Record<string, (v: any, ...a: string[]) => any> = {
   keys: (v) => (isMap(v) ? Object.keys(v) : []),
   first: (v) => (Array.isArray(v) ? v[0] : v),
   last: (v) => (Array.isArray(v) ? v[v.length - 1] : v),
+  reverse: (v) => (Array.isArray(v) ? [...v].reverse() : v),
   sum: (v) => (v ?? []).reduce((a: number, b: any) => a + (+b || 0), 0),
   add: (v, n) => (+v || 0) + +n,
   map: (v, p) => (v ?? []).map((i: any) => get(i, p)),
@@ -137,7 +141,7 @@ const CHEMISTRY: Record<string, { params: string[]; emits: string[] }> = {
   memory:    { params: ["write", "value", "scope", "write_all", "read", "fill", "append", "keep"], emits: ["written", "read", "missing"] },
   sense:     { params: ["subject", "target", "expect"], emits: ["pass", "fail"] },
   transform: { params: ["input", "get", "pick", "merge", "find", "where", "render", "with", "value", "shape", "prefix", "stable", "parse"], emits: ["done", "none"] },
-  trigger:   { params: ["on", "port", "cell", "with"], emits: ["listening"] },
+  trigger:   { params: ["on", "port", "cell", "with", "expose", "title"], emits: ["listening", "failed"] },
   grow:      { params: ["genome", "delta", "phenotype", "experience", "with"], emits: ["grown", "stillborn"] },
 };
 type Reaction = { event: string; output?: any };
@@ -220,6 +224,7 @@ function chemistry(org: Organism): Record<string, (a: any) => Reaction | Promise
     },
 
     trigger: (a) => new Promise((ok, fail) => {
+      if (a.on === "ui") return serveSkin(org, a).then(ok);
       if (a.on !== "http") return fail(new Error(`trigger: unknown source '${a.on}'`));
       const server = http.createServer((q, s) => {
         let raw = "";
@@ -233,7 +238,7 @@ function chemistry(org: Organism): Record<string, (a: any) => Reaction | Promise
           } catch (e: any) { s.writeHead(500, { "content-type": "application/json" }).end(JSON.stringify({ error: e.message })); }
         });
       });
-      server.on("error", fail);
+      server.on("error", (e: any) => ok({ event: "failed", output: { error: e.code ?? e.message } }));
       server.listen(a.port, () => { org.listeners.push(() => server.close()); ok({ event: "listening", output: { port: a.port } }); });
     }),
 
@@ -292,6 +297,8 @@ function laws(g: any): string[] {
         const allowed = g.genes[callee]?.params ?? CHEMISTRY[callee]?.params ?? [];
         if (isMap(args)) for (const k of Object.keys(args)) need(allowed.includes(k), `${at(s)} passes unknown param '${k}' to gene '${callee}'`);
         if (isMap(args) && typeof args.cell === "string") need(cells.includes(args.cell), `${at(s)} hands '${args.cell}' to '${callee}' but it is not in its cells`);
+        if (isMap(args) && Array.isArray(args.expose))
+          for (const x of args.expose) need(cells.includes(x), `${at(s)} exposes '${x}' but it is not in its cells`);
       } else if (cells.includes(callee)) {
         const cd = g.cells[callee];
         emits = cd?.ends ?? [];
@@ -302,10 +309,38 @@ function laws(g: any): string[] {
       for (const r of refs(st.do)) need(local.has(r), `${at(s)} reads '$${r}', which is never bound`);
     }
     for (const r of refs(d.output)) need(bound.has(r), `${at()} output reads '$${r}', which is never bound`);
+    if (d.skin !== undefined) e.push(...skinLaws(d.skin, d.input ?? []).map((m) => `${at()} skin: ${m}`));
   }
 
   for (const [p, d] of Object.entries<any>(g.phenotypes)) need(g.cells[d?.grow], `phenotype '${p}' grows unknown cell '${d?.grow}'`);
   if (g.active_phenotype) need(g.phenotypes[g.active_phenotype], `active_phenotype '${g.active_phenotype}' does not exist`);
+  return e;
+}
+
+/** A skin only describes; it may not invent inputs or widgets the renderer lacks. */
+const SKIN_KEYS = ["title", "icon", "about", "action", "auto", "fields", "show", "summary", "badge", "good"];
+const FIELD_KEYS = ["widget", "options", "default", "placeholder", "span", "label"];
+const WIDGETS = ["text", "textarea", "json", "number", "choose"];
+const SHOW_AS = ["auto", "json", "table", "text"];
+function skinLaws(k: any, input: string[]): string[] {
+  const e: string[] = [];
+  if (!isMap(k)) return ["must be a map"];
+  for (const key of Object.keys(k)) if (!SKIN_KEYS.includes(key)) e.push(`unknown key '${key}' (known: ${SKIN_KEYS.join(", ")})`);
+  if (k.fields !== undefined && !isMap(k.fields)) e.push("fields must be a map");
+  for (const [f, spec] of Object.entries<any>(isMap(k.fields) ? k.fields : {})) {
+    if (!input.includes(f)) e.push(`field '${f}' is not an input`);
+    const w = typeof spec === "string" ? spec : spec?.widget ?? "text";
+    if (!WIDGETS.includes(w)) e.push(`field '${f}' uses unknown widget '${w}' (known: ${WIDGETS.join(", ")})`);
+    if (isMap(spec)) for (const key of Object.keys(spec)) if (!FIELD_KEYS.includes(key)) e.push(`field '${f}' has unknown key '${key}'`);
+    if (w === "choose" && !Array.isArray(spec?.options)) e.push(`field '${f}' is a choose without options`);
+  }
+  if (k.show !== undefined && !Array.isArray(k.show)) e.push("show must be a list");
+  for (const s of Array.isArray(k.show) ? k.show : []) {
+    if (!isMap(s)) { e.push("each show entry must be a map"); continue; }
+    if (s.as !== undefined && !SHOW_AS.includes(s.as)) e.push(`show '${s.label ?? s.path}' uses unknown 'as: ${s.as}' (known: ${SHOW_AS.join(", ")})`);
+    if (s.columns !== undefined && !isMap(s.columns)) e.push(`show '${s.label ?? s.path}' columns must map label → path`);
+  }
+  if (k.good !== undefined && !Array.isArray(k.good)) e.push("good must be a list");
   return e;
 }
 
@@ -368,7 +403,11 @@ class Organism {
   constructor(public genome: any, public memory: Memory, public budget: Budget,
               public depth: number, public prefix: string, public dir: string) {}
 
-  say(s: string) { console.log(s.split("\n").map((l) => this.prefix + l).join("\n")); }
+  flush = () => {};
+  say(s: string) {
+    VOICE.getStore()?.push(...s.split("\n"));
+    console.log(s.split("\n").map((l) => this.prefix + l).join("\n"));
+  }
   close() { this.listeners.splice(0).forEach((f) => f()); }
 
   /** Run one cell to a terminal state. Its behaviour comes only from its lifecycle. */
@@ -470,6 +509,167 @@ class Organism {
   }
 }
 
+// ─────────────── SKIN: the body rendered from the genome ───────────────
+// `trigger: { on: ui, expose: [cells] }` serves one generic page. For each exposed cell it draws
+// a form from the cell's inputs (shaped by `skin.fields`) and renders the cell's output
+// (shaped by `skin.show`). The page knows cells, inputs and outputs — never what they mean.
+function serveSkin(org: Organism, a: any): Promise<Reaction> {
+  const expose: string[] = a.expose ?? [];
+  const meta = () => ({
+    title: a.title ?? org.genome.genome.name,
+    genome: { name: org.genome.genome.name, version: org.genome.genome.version, parent: org.genome.genome.parent },
+    cells: expose.map((n) => {
+      const d = org.genome.cells[n];
+      return { name: n, input: d.input ?? [], ends: d.ends ?? [], fatal: d.fatal ?? [], skin: d.skin ?? {} };
+    }),
+  });
+  return new Promise((ok) => {
+    const server = http.createServer((q, s) => {
+      const send = (code: number, body: any, type = "application/json") =>
+        s.writeHead(code, { "content-type": type, "cache-control": "no-store" }).end(typeof body === "string" ? body : JSON.stringify(body));
+      let raw = "";
+      q.on("data", (d) => (raw += d));
+      q.on("end", async () => {
+        const url = q.url?.split("?")[0] ?? "/";
+        if (q.method === "GET" && url === "/")
+          return send(200, SKIN_HTML.replace("__TITLE__", String(a.title ?? org.genome.genome.name).replace(/[<&>"]/g, "")), "text/html; charset=utf-8");
+        if (q.method === "GET" && url === "/api/body") return send(200, meta());
+        const m = url.match(/^\/api\/run\/([\w.-]+)$/);
+        if (q.method === "POST" && m) {
+          // only this page may act: JSON bodies force a CORS preflight, and foreign origins are refused
+          const origin = q.headers.origin;
+          if (!String(q.headers["content-type"] ?? "").includes("application/json") || (origin && new URL(origin).host !== q.headers.host))
+            return send(403, { error: "forbidden" });
+          if (!expose.includes(m[1])) return send(404, { error: `'${m[1]}' is not exposed` });
+          const def = org.genome.cells[m[1]];
+          let given: any;
+          try { given = raw ? JSON.parse(raw) : {}; } catch { return send(400, { error: "body is not JSON" }); }
+          const inputs = Object.fromEntries(Object.entries(isMap(given) ? given : {}).filter(([k]) => (def.input ?? []).includes(k)));
+          const log: string[] = [];
+          try {
+            const r = await VOICE.run(log, () => org.run(m[1], { ...(a.with ?? {}), ...inputs }));
+            org.flush();
+            const view = { ...(isMap(r.output) ? r.output : { output: r.output }), state: r.state, trail: r.trail };
+            const summary = def.skin?.summary !== undefined ? evaluate(def.skin.summary, view) : undefined;
+            return send(200, { state: r.state, trail: r.trail, output: r.output, summary, log: log.map(strip), genome: meta().genome });
+          } catch (e: any) { return send(500, { error: e.message, log: log.map(strip) }); }
+        }
+        send(404, { error: "no such route" });
+      });
+    });
+    server.on("error", (e: any) => ok({ event: "failed", output: { error: e.code ?? e.message } }));
+    server.listen(a.port, "127.0.0.1", () => { org.listeners.push(() => server.close()); ok({ event: "listening", output: { port: a.port } }); });
+  });
+}
+
+const SKIN_HTML = String.raw`<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__</title>
+<style>
+:root{--bg:#f6f6f7;--panel:#fff;--ink:#212121;--dim:#6b6b6b;--line:#e2e2e4;--accent:#ff6c37;--accent-ink:#fff;--good:#0a8a4a;--bad:#d63b2f;--code:#f3f3f5;--sel:#fff1eb;color-scheme:light}
+@media (prefers-color-scheme:dark){:root{--bg:#1c1c1c;--panel:#252526;--ink:#e8e8e8;--dim:#9a9a9a;--line:#3a3a3a;--code:#1e1e1e;--sel:#3a2a22;--good:#3ecf7c;--bad:#ff6b5e;color-scheme:dark}}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;display:flex;flex-direction:column;background:var(--bg);color:var(--ink);font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+header{display:flex;align-items:center;gap:10px;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--line)}
+header b{font-size:15px}header .ver{color:var(--dim);font-size:12px}header .grow{margin-left:auto;color:var(--dim);font-size:12px}
+.shell{display:grid;grid-template-columns:220px 1fr;flex:1}
+nav{background:var(--panel);border-right:1px solid var(--line);padding:8px}
+nav button{display:flex;gap:10px;align-items:center;width:100%;padding:8px 10px;border:0;border-radius:6px;background:none;color:var(--ink);font:inherit;text-align:left;cursor:pointer}
+nav button:hover{background:var(--bg)}nav button.on{background:var(--sel);color:var(--accent);font-weight:600}
+nav .ic{width:20px;text-align:center}
+main{padding:20px 24px;min-width:0}
+h1{font-size:18px;margin:0 0 4px}.about{color:var(--dim);margin:0 0 16px;max-width:70ch}
+.form{display:grid;grid-template-columns:repeat(12,1fr);gap:10px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px}
+.f{display:flex;flex-direction:column;gap:4px;min-width:0}.f label{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--dim)}
+input,select,textarea{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:7px 9px;width:100%}
+textarea{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;min-height:84px;resize:vertical}
+input:focus,select:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:-1px}.bad-in{border-color:var(--bad)}
+.act{grid-column:1/-1;display:flex;gap:10px;align-items:center}
+.go{background:var(--accent);color:var(--accent-ink);border:0;border-radius:6px;padding:8px 18px;font:inherit;font-weight:600;cursor:pointer}.go:disabled{opacity:.6;cursor:wait}
+.hint{color:var(--dim);font-size:12px}
+.result{margin-top:16px;background:var(--panel);border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.rhead{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--line)}
+.badge{font-weight:700;font-size:12px;padding:2px 8px;border-radius:99px;border:1px solid currentColor}.badge.good{color:var(--good)}.badge.bad{color:var(--bad)}
+.trail{color:var(--dim);font-size:12px;font-family:ui-monospace,Menlo,monospace}
+.tabs{display:flex;gap:2px;padding:0 10px;border-bottom:1px solid var(--line);overflow-x:auto}
+.tabs button{border:0;background:none;color:var(--dim);font:inherit;padding:8px 10px;cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap}
+.tabs button.on{color:var(--ink);border-bottom-color:var(--accent)}
+.pane{padding:12px 14px;overflow-x:auto}
+pre{margin:0;font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;word-break:break-word}
+.k{color:#a3508e}.s{color:#0b7d6e}.n{color:#b35c00}.b{color:#2b6cc4}.z{color:var(--dim)}
+@media (prefers-color-scheme:dark){.k{color:#e39ed3}.s{color:#6fd3c1}.n{color:#f2a65a}.b{color:#7fb0ff}}
+table{border-collapse:collapse;width:100%;font-size:13px}th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--dim);font-weight:600}
+tbody tr.row{cursor:pointer}tbody tr.row:hover{background:var(--bg)}td.more{background:var(--code)}
+.yes{color:var(--good);font-weight:700}.no{color:var(--bad);font-weight:700}
+dl{display:grid;grid-template-columns:max-content 1fr;gap:4px 14px;margin:0}dt{color:var(--dim)}dd{margin:0;min-width:0}
+details summary{cursor:pointer;color:var(--dim)}
+.err{color:var(--bad);padding:12px 14px;white-space:pre-wrap}.empty{color:var(--dim)}
+@media (max-width:720px){.shell{grid-template-columns:1fr}nav{display:flex;overflow-x:auto;border-right:0;border-bottom:1px solid var(--line)}nav button{width:auto;white-space:nowrap}.f{grid-column:1/-1!important}}
+</style></head><body>
+<header><span>🧬</span><b id="title"></b><span class="ver" id="ver"></span><span class="grow">grown from DNA · nothing here is hand-built</span></header>
+<div class="shell"><nav id="nav"></nav><main id="main"></main></div>
+<script>
+const h=(t,a={},...kids)=>{const e=document.createElement(t);for(const[k,v]of Object.entries(a)){if(v==null)continue;if(k==="class")e.className=v;else if(k.startsWith("on"))e.addEventListener(k.slice(2),v);else e.setAttribute(k,v)}for(const c of kids.flat()){if(c!=null&&c!==false)e.append(c instanceof Node?c:String(c))}return e};
+const get=(o,p)=>p==null||p===""?o:String(p).split(/\.|\[(\d+)\]/).filter(Boolean).reduce((x,k)=>x==null?undefined:x[k],o);
+const isObj=v=>v!==null&&typeof v==="object"&&!Array.isArray(v);
+const keep={get(k){try{return JSON.parse(localStorage.getItem(k))}catch{return null}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch{}}};
+let BODY;
+const esc=s=>String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+function jsonView(v){const t=esc(JSON.stringify(v,null,2)??"undefined");const p=h("pre");p.innerHTML=t.replace(/("(?:\\.|[^"\\])*")(\s*:)?|\b(true|false)\b|\bnull\b|-?\d+(?:\.\d+)?(?:e[+-]?\d+)?/g,(m,str,colon,bool)=>str?(colon?'<span class="k">'+str+'</span>'+colon:'<span class="s">'+str+'</span>'):bool?'<span class="b">'+m+'</span>':m==="null"?'<span class="z">null</span>':'<span class="n">'+m+'</span>');return p}
+function scalar(v){if(v===true)return h("span",{class:"yes"},"✔");if(v===false)return h("span",{class:"no"},"✘");if(v==null)return h("span",{class:"empty"},"—");if(typeof v==="object"){const s=JSON.stringify(v);return h("code",{title:s},s.length>80?s.slice(0,80)+"…":s)}return String(v)}
+function table(rows,columns){if(!Array.isArray(rows))return auto(rows);if(!rows.length)return h("div",{class:"empty"},"nothing yet");
+ let cols=columns?Object.entries(columns):[...new Set(rows.slice(0,20).flatMap(r=>isObj(r)?Object.keys(r):[]))].slice(0,8).map(k=>[k,k]);
+ if(!cols.length)cols=[["value",""]];
+ const body=h("tbody");
+ for(const r of rows){const tr=h("tr",{class:"row"},cols.map(([,p])=>h("td",{},scalar(get(r,p)))));let open=null;
+  tr.onclick=()=>{if(open){open.remove();open=null;return}open=h("tr",{},h("td",{class:"more",colspan:cols.length},jsonView(r)));tr.after(open)};body.append(tr)}
+ return h("table",{},h("thead",{},h("tr",{},cols.map(([l])=>h("th",{},l)))),body)}
+function auto(v){if(Array.isArray(v))return v.length&&v.every(isObj)?table(v):jsonView(v);
+ if(isObj(v)){const keys=Object.keys(v);if(!keys.length)return h("div",{class:"empty"},"empty");
+  return h("dl",{},keys.flatMap(k=>[h("dt",{},k),h("dd",{},isObj(v[k])||Array.isArray(v[k])?h("details",{},h("summary",{},Array.isArray(v[k])?v[k].length+" items":Object.keys(v[k]).length+" keys"),auto(v[k])):scalar(v[k]))]))}
+ return h("pre",{},v==null?"—":String(v))}
+function view(v,as,columns){return as==="json"?jsonView(v):as==="text"?h("pre",{},v==null?"":typeof v==="string"?v:JSON.stringify(v,null,2)):as==="table"?table(v,columns):auto(v)}
+function fieldsOf(c){const f=c.skin.fields;return f?Object.entries(f).map(([n,s])=>({name:n,...(typeof s==="string"?{widget:s}:s)})):c.input.map(n=>({name:n}))}
+function widget(f,saved){const v=saved??(f.default==null?"":typeof f.default==="object"?JSON.stringify(f.default,null,2):String(f.default));const w=f.widget||"text";
+ if(w==="choose"){const s=h("select",{},(f.options||[]).map(o=>h("option",{value:o},o)));s.value=v||String((f.options||[])[0]??"");return s}
+ if(w==="json"||w==="textarea"){const t=h("textarea",{placeholder:f.placeholder??(w==="json"?"{ }":""),spellcheck:"false"});t.value=v;return t}
+ const i=h("input",{type:w==="number"?"number":"text",placeholder:f.placeholder??""});i.value=v;return i}
+async function boot(){BODY=await(await fetch("/api/body")).json();document.getElementById("title").textContent=BODY.title;
+ document.getElementById("ver").textContent=BODY.genome.name+" v"+BODY.genome.version+(BODY.genome.parent?" · from "+BODY.genome.parent:"");
+ const nav=document.getElementById("nav");
+ for(const c of BODY.cells)nav.append(h("button",{"data-cell":c.name,onclick:()=>{location.hash=c.name}},h("span",{class:"ic"},c.skin.icon||"◆"),c.skin.title||c.name));
+ const want=decodeURIComponent(location.hash.slice(1))||keep.get("cell");open(BODY.cells.some(c=>c.name===want)?want:BODY.cells[0]?.name)}
+window.addEventListener("hashchange",()=>BODY&&open(decodeURIComponent(location.hash.slice(1))));
+function open(name){const c=BODY.cells.find(x=>x.name===name);if(!c)return;keep.set("cell",name);if(location.hash.slice(1)!==name)history.replaceState(null,"","#"+name);
+ document.querySelectorAll("nav button").forEach(b=>b.classList.toggle("on",b.dataset.cell===name));
+ const saved=keep.get("in:"+name)||{};const fields=fieldsOf(c);const els={};
+ const form=h("form",{class:"form"});
+ for(const f of fields){els[f.name]=widget(f,saved[f.name]);form.append(h("div",{class:"f",style:"grid-column:span "+Math.min(12,Math.max(1,+f.span||12))},h("label",{},f.label||f.name),els[f.name]))}
+ const go=h("button",{class:"go",type:"submit"},c.skin.action||"Run");const hint=h("span",{class:"hint"},fields.length?"⌘/Ctrl + Enter":"");
+ form.append(h("div",{class:"act"},go,hint));const out=h("div");
+ async function run(){const values={},raw={};let bad=false;
+  for(const f of fields){const el=els[f.name];const t=el.value;raw[f.name]=t;el.classList.remove("bad-in");if(t==="")continue;
+   if(f.widget==="json"){try{values[f.name]=JSON.parse(t)}catch{el.classList.add("bad-in");bad=true}}else if(f.widget==="number")values[f.name]=Number(t);else values[f.name]=t}
+  if(bad){hint.textContent="fix the highlighted JSON";return}
+  keep.set("in:"+name,raw);go.disabled=true;const t0=Date.now();const tick=setInterval(()=>hint.textContent="growing… "+((Date.now()-t0)/1000).toFixed(1)+"s",100);
+  try{const r=await(await fetch("/api/run/"+name,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(values)})).json();out.replaceChildren(result(c,r))}
+  catch(e){out.replaceChildren(h("div",{class:"result"},h("div",{class:"err"},String(e))))}
+  finally{clearInterval(tick);go.disabled=false;hint.textContent=fields.length?"⌘/Ctrl + Enter":""}}
+ form.onsubmit=e=>{e.preventDefault();run()};form.onkeydown=e=>{if(e.key==="Enter"&&(e.metaKey||e.ctrlKey)){e.preventDefault();run()}};
+ document.getElementById("main").replaceChildren(h("h1",{},(c.skin.icon?c.skin.icon+" ":"")+(c.skin.title||c.name)),c.skin.about?h("p",{class:"about"},c.skin.about):null,form,out);
+ if(c.skin.auto)run()}
+function result(c,r){const box=h("div",{class:"result"});
+ if(r.error){box.append(h("div",{class:"err"},r.error));if(r.log?.length)box.append(h("div",{class:"pane"},h("pre",{},r.log.join("\n"))));return box}
+ const val=c.skin.badge?get(r.output,c.skin.badge):r.state;const good=c.skin.good?c.skin.good.includes(val):!c.fatal.includes(r.state);
+ box.append(h("div",{class:"rhead"},h("span",{class:"badge "+(good?"good":"bad")},val??r.state),r.summary?h("span",{},r.summary):null,h("span",{class:"trail"},(r.trail||[]).join(" → "))));
+ const sections=(c.skin.show||[{label:"Output",path:""}]).map(s=>({label:s.label||s.path||"Output",make:()=>view(get(r.output,s.path),s.as,s.columns)}));
+ const log=(r.log||[]).filter(l=>l.trim());if(log.length)sections.push({label:"Console",make:()=>h("pre",{},log.join("\n"))});
+ const tabs=h("div",{class:"tabs"}),pane=h("div",{class:"pane"});
+ sections.forEach((s,i)=>{const b=h("button",{onclick:()=>{tabs.querySelectorAll("button").forEach(x=>x.classList.remove("on"));b.classList.add("on");pane.replaceChildren(s.make())}},s.label);tabs.append(b);if(i===0){b.classList.add("on");pane.append(s.make())}});
+ box.append(tabs,pane);return box}
+boot();
+</script></body></html>`;
+
 // ─────────────── BIRTH ───────────────
 type BirthOpts = { phenotype?: string; experience?: any; with?: Record<string, any>;
                    depth: number; prefix: string; budget?: Budget };
@@ -507,20 +707,25 @@ async function birth(genome: any, o: BirthOpts) {
   org.say(c.d(`  ✔ laws of physics hold (${Object.keys(genome.genes).length} genes · ${Object.keys(genome.cells).length} cells)`));
   org.say(c.d(`  🌱 growing ${pheno.grow}`));
 
+  let heritage = before;
+  org.flush = () => {   // bones outlive the run: saved after the root settles and after every UI action
+    const now = JSON.stringify(Object.keys(bones).filter((b) => bones[b] === "heritable").map((b) => org.memory.scopes[b]));
+    lock.bones = Object.fromEntries(Object.keys(bones).map((b) => [b, org.memory.scopes[b]]));
+    if (now !== heritage) {
+      heritage = now;
+      lock.lineage.push(lock.version);
+      const [x, y, p] = lock.version.split(".").map(Number);
+      lock.version = `${x}.${y}.${p + 1}`;
+      org.say(c.y(`  🧬 heritable memory changed → v${lock.version}`));
+    }
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(lockPath, JSON.stringify(lock, null, 2));
+  };
+
   let r;
   try { r = await org.run(pheno.grow, { ...(pheno.with ?? {}), ...(o.with ?? {}), experience }); }
   finally { if (!pheno.persist) org.close(); }
-
-  const after = JSON.stringify(Object.keys(bones).filter((b) => bones[b] === "heritable").map((b) => org.memory.scopes[b]));
-  lock.bones = Object.fromEntries(Object.keys(bones).map((b) => [b, org.memory.scopes[b]]));
-  if (before !== after) {
-    lock.lineage.push(lock.version);
-    const [x, y, p] = lock.version.split(".").map(Number);
-    lock.version = `${x}.${y}.${p + 1}`;
-    org.say(c.y(`  🧬 heritable memory changed → v${lock.version}`));
-  }
-  fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(lockPath, JSON.stringify(lock, null, 2));
+  org.flush();
   return { ...r, fatal: (genome.cells[pheno.grow].fatal ?? []).includes(r.state), spent: budget.spent };
 }
 

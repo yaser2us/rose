@@ -9,6 +9,7 @@
     "mock": "tsx --env-file-if-exists=.env ribosome.ts postman.genome.yaml collection.yaml --phenotype mock_server",
     "strict": "tsx --env-file-if-exists=.env ribosome.ts postman.genome.yaml collection.yaml --strict",
     "rehearse": "tsx --env-file-if-exists=.env ribosome.ts postman.genome.yaml rehearsal.yaml --phenotype rehearse",
+    "studio": "tsx --env-file-if-exists=.env ribosome.ts postman.genome.yaml collection.yaml --phenotype studio",
     "evolve": "tsx --env-file-if-exists=.env ribosome.ts postman.genome.yaml collection.yaml --phenotype evolve"
   },
   "dependencies": { "tsx": "^4.19.0", "yaml": "^2.5.0" }
