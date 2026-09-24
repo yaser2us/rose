@@ -1,0 +1,40 @@
+# Offline dress rehearsal for the mind: this mock plays the LLM and answers with a
+# canned DNA delta. Everything after the answer is real — parse, splice, laws, birth.
+#   npx tsx ribosome.ts postman.genome.yaml rehearsal.yaml --phenotype rehearse
+name: mind-rehearsal
+mock_port: 4011
+mocks:
+  - method: POST
+    path: /v1/messages
+    respond:
+      status: 200
+      body:
+        content:
+          - type: text
+            text: |
+              ```yaml
+              genome: { version: 0.4.0 }
+              cells:
+                history:
+                  genes: [memory, signal]
+                  input: [report]
+                  lifecycle:
+                    recording: { do: { memory: { append: exchanges, value: { step: $r.step.name, method: "$r.step.method|default:GET", url: $r.step.url, ok: $r.ok, response: $r.call.response }, scope: archive, keep: 200 }, for: { r: $report } }, as: tape, to: telling }
+                    telling:   { do: { signal: { log: "  📜 history: ${tape|len} exchanges recorded (${tape|last|len} kept)" } }, to: done }
+                  ends: [done]
+                postman:
+                  genes: [memory]
+                  cells: [environment, mock, auth, runner, learner, history]
+                  input: [experience, parallel]
+                  lifecycle:
+                    seeding:   { do: { environment: { vars: $experience.variables } }, to: mocking }
+                    mocking:   { do: { mock: { routes: $experience.mocks, port: $experience.mock_port } }, to: authing }
+                    authing:   { do: { auth: { login: $experience.auth } }, on: { failed: dead, "*": recalling } }
+                    recalling: { do: { memory: { read: mutations, scope: dna } }, as: learned, to: running }
+                    running:   { do: { runner: { steps: $experience.steps, parallel: $parallel, learned: $learned } }, as: report, to: learning }
+                    learning:  { do: { learner: { report: $report, runs: 3 } }, to: remembering }
+                    remembering: { do: { history: { report: $report } }, to: grown }
+                  ends: [grown, dead]
+                  fatal: [dead]
+                  output: { report: $report }
+              ```

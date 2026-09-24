@@ -1,149 +1,160 @@
-# 🧬 Organism — software that grows from a genome
+# 🧬 Organism: software that grows itself
 
-> Handoff doc. Place at the repo root as `CLAUDE.md` so Claude Code loads it automatically.
+> Handoff doc for Claude Code sessions. Read this first.
 
-## The idea
+## The goal
 
-Instead of hand-building an app like Postman, we write a **genome**: a tiny set of primitives in YAML. A runtime called the **ribosome** then *grows* the app from it, layer by layer, the way DNA grows a body:
+**We are not building Postman. We are building the thing that builds Postman.**
+
+The deliverable is a real, usable Postman-class app, and it must *grow itself*. The system is closed, like a chicken and its egg:
 
 ```
-genes → cells → organs → body → phenotype → mind → action → learning → evolution
+F(genome, intent)  →  F′ + intent′  →  F″ + intent″  →  …
 ```
 
-**The one law:** every layer may only be built from the layer below it. Nothing exists unless it can be traced back to genes.
-
-The first target organism is **Postman**. The goal is not to clone Postman. It is to prove the genome approach can grow a Postman-class tool, and that the *same DNA* can grow other species (load tester, mock server, contract guard) by changing expression flags.
+- `F` is the ribosome (kernel) plus a genome.
+- The output of growth is a new genome, which is valid input to growth again.
+- Cells compose: `cell a + cell b = cell ab`, and `ab` is itself a cell that can compose again.
+- Postman is one intent along this path, not a special case.
 
 ## Repo layout
 
 ```
-ribosome.ts           the runtime: reads genome, enforces invariants, grows organism
-postman.genome.yaml   the DNA (v0.2, executable)
-collection.yaml       an "experience": variables, auth, mocks, steps
-.organism/            generated: <collection>.lock.json (version, lineage, learned mutations)
-package.json          deps: tsx, yaml (zero other deps, on purpose)
+ribosome.ts           the kernel: generic interpreter + laws. No feature code, ever.
+postman.genome.yaml   the seed DNA (the hand-written egg)
+collection.yaml       an experience: variables, auth, mocks, steps (runs offline)
+rehearsal.yaml        an experience where a mock plays the LLM, for offline mind tests
+.organism/            generated, gitignored:
+  <exp>.lock.json       learned memory ("bones"), version, lineage
+  genomes/*.yaml        genomes the organism grew (delete a file to undo it)
 ```
 
-Run it:
+## Commands
 
 ```bash
-npm i
-npm run grow      # phenotype: postman
-npm run load      # phenotype: load_tester (50 parallel cells per step)
-npx tsx ribosome.ts postman.genome.yaml collection.yaml --phenotype mock_server
+npm run grow       # phenotype postman
+npm run load       # phenotype load_tester (50 parallel calls per step)
+npm run mock       # phenotype mock_server (keeps serving)
+npm run strict     # grow, but first prove the kernel mentions no genome-defined name
+npm run rehearse   # the mind grows a child genome offline (a mock plays the LLM)
+ANTHROPIC_API_KEY=… npm run evolve -- --with intent="add a history of every request"
+npx tsx ribosome.ts .organism/genomes/postman-0.4.0.yaml collection.yaml   # run a grown child
 ```
 
-Delete `.organism/` to reset learning.
+To reset learning, delete `.organism/`.
 
-## Layer model (what each layer is, and where it lives today)
+## The model
 
-| Layer | Meaning | Implementation today |
-|---|---|---|
-| **Genes** | 5 primitives: `signal`, `memory`, `sense`, `transform`, `trigger` | `chemistry()` in ribosome: real behaviour per gene |
-| **Cells** | a gene subset + lifecycle state machine | `Cell` class; lifecycle comes from YAML. A cell receives *only* its declared genes |
-| **Organs** | cells wired together | `ORGAN_FOLDS`: **hand-written TS per organ** (see gaps) |
-| **Body** | organs + skin (UI) + bones (storage) | skin = CLI report; bones = `.organism/*.lock.json` |
-| **Phenotype** | which organs are expressed + flags | `phenotypes:` in genome; `--phenotype` flag |
-| **Mind** | planner (LLM) deciding what to explore | **dormant** |
-| **Action** | execution under budget/guardrails | runner organ + `action.budget.max_requests` enforced in `signal` gene |
-| **Learning** | organism mutates its own DNA | `response_shape_stable` → auto-adds `type:` senses after N identical response shapes; bumps version, records lineage |
-| **Evolution** | fitness-gated selection of genomes | **not built** |
-
-### Invariants enforced at birth (`checkInvariants`)
-
-A violation means the organism is "stillborn" and the process exits. These are checked:
-
-- Every gene in the genome has known chemistry.
-- Every cell uses only declared genes.
-- Every organ uses only declared cells, and its `wiring` references only its own cells.
-- Every organ has a fold.
-- Every phenotype expresses only existing organs.
-
-At runtime, `grower()` also throws if an organ tries to grow a cell type outside its DNA.
-
-### Sense grammar (assertions)
-
-`expect: { target: value }`, where the target is a path like `status`, `time`, `headers.x`, or `body.a.b[0].c`. The value can be:
-
-- a literal, checked by deep equality;
-- `exists`;
-- `type:string|number|boolean|object|array|null`;
-- `<500` or `>0`.
-
-### Mock responder
-
-Mock routes can declare `require:` senses on the request, which return 401 when they fail. A response string starting with `$req.` is replaced with a value from the request, e.g. `$req.body.type`.
-
-## Honest status
-
-**What it is:** a headless Postman *engine*, roughly the equivalent of the Collection Runner or Newman. It covers requests, `{{variables}}`, the login → token chain, assertions, collection runs, a mock server, load testing, and self-learned assertions. All of it has been verified working.
-
-**What it is not (yet):**
-
-1. **Not truly generative.** Organ behaviour is hand-coded in `ORGAN_FOLDS`. The genome *selects, wires and validates* but doesn't *produce* behaviour. Cell behaviour is also partly hand-coded: the `fire()` function is the "folding" of `http_call`. In other words, it is currently a well-policed plugin architecture in a biology costume.
-2. **No real skin.** There is no GUI, request builder, history or workspaces, which is most of what Postman actually is.
-3. **The mind is dormant.** Evolution and fitness scoring are not built. The `endpoint_flaky` mutation is declared but not implemented.
-
-## The acceptance test (north star)
-
-> **Add a brand-new feature (e.g. a `history` organ that records every request/response) by editing YAML only, with zero TypeScript changes.**
-
-When this passes, the genome is real. Every roadmap item serves it.
-
-## Roadmap
-
-### Step 1: generic cells
-Remove per-type folding like `fire()`. A cell's behaviour should be derived from its lifecycle alone. Each state declares which gene to call on entry and how that gene's emitted event maps to the next transition. A sketch:
+### One recursive unit: the cell
 
 ```yaml
 http_call:
-  genes: [signal, sense]
-  lifecycle:
-    idle:    { on: fire, to: sending }
-    sending: { do: signal(input.request), on: received, to: judging, else: failed }
-    judging: { do: sense*(output, input.expect), on: pass, to: healthy, else: sick }
+  genes: [signal, sense]          # genes it may call
+  cells: []                       # other cells it may call (composition, recursion)
+  input: [request, expect]
+  lifecycle:                      # ordered; first state is the entry
+    idle:    { to: sending }
+    sending: { do: { signal: $request }, as: response, on: { received: judging, failed: failed } }
+    judging: { do: { sense: { subject: $response, expect: $expect } }, as: checks, on: { pass: healthy, fail: sick } }
+  ends: [healthy, sick, failed]   # terminal states; the end reached is the caller's event
+  fatal: []                       # ends that count as death (exit code 1 / stillborn child)
+  output: { response: $response, checks: $checks }
 ```
 
-The ribosome then becomes a generic interpreter of this. `sense*` means "sense for each expectation, all must pass".
+- Each state does **one** call (a gene or a cell), binds the result with `as`, then either goes `to` the next state or follows `on: {event: state, "*": fallback}`.
+- A gene's events are its `emits`. A cell's events are its `ends`.
+- Fan-out: `for: { item: $list }` runs sequentially; `times: N` runs in parallel. The result is a list. The event is the shared event, or `mixed` / `none`.
+- Organs, whole apps (`postman`, `mock_world`) and the `mind` are all ordinary cells.
+- A phenotype names a root cell and its flags: `load_tester: { grow: postman, with: { parallel: 50 } }`.
 
-### Step 2: organs as executable wiring (the heart)
-Today `wiring` lines are only validated. Make the ribosome *execute* them as an event bus between cells:
+### Wiring language (kernel)
 
-```yaml
-auth:
-  cells: [http_call, extractor, variable]
-  inputs: [request, extract]
-  wiring:
-    - self.start           -> http_call.fire(request)
-    - http_call.healthy    -> extractor.input(output, extract)
-    - extractor.stored     -> variable.write(token, output)
-  exposes:
-    token: variable.value
-```
+| Form | Result |
+|---|---|
+| `"$a.b"` (the whole string) | the raw value |
+| `"text ${a.b}"` | interpolated text |
+| `\|filter:arg` | applies a filter: `default pad json yaml join len keys first last sum add map where all eq pct mark green red dim yellow` |
+| `$$` | escape for a literal `$` |
 
-Once this works, delete `ORGAN_FOLDS`. Open design questions:
-- **Fan-out:** how does `runner` express "for each step" and "×N parallel"? Candidate syntax: `http_call[*]` and `http_call[n] -> http_call[n+1]`.
-- **Payloads:** how does data flow along a wire? Candidate: every event carries `output`, and wires can `transform` it.
-- **Long-lived vs one-shot cells:** a `responder` lives per request, a `variable` lives per run.
+`{{var}}` is **not** wiring. It is runtime templating, done by `memory: { fill: … }` using the `body.recall` chain.
 
-### Step 3: generated skin
-Each organ declares `exposes` (inputs, outputs, actions). The body auto-renders a UI from that: a request editor from `http_call` inputs, a results panel from outputs, and an environment panel from `variable` cells. The stack preference is React; XState can replace the hand-rolled `Cell` machine if useful. This is the step where it starts to *look* like Postman.
+### Genes (the chemistry in `CHEMISTRY` / `chemistry()`)
 
-### Step 4: mind
-An LLM reads an OpenAPI spec plus past runs and failures, then **writes `collection.yaml`** (the experience). Hard constraint: the mind can only plan with cells and organs that exist in the genome. The ribosome must reject plans that reference anything else.
+| Gene | Operations | Emits |
+|---|---|---|
+| `signal` | HTTP `method/url/headers/body`, or `log` | received, failed, sent |
+| `memory` | `write`, `write_all`, `read`, `append` (+`keep`), `fill` | written, read, missing |
+| `sense` | `subject` + `expect` (a map means all must pass) | pass, fail |
+| `transform` | `get`, `pick`, `merge`, `find`/`where`, `render`/`with`, `value`, `shape`, `stable`, `parse` (YAML) | done, none |
+| `trigger` | `on: http`, `port`, `cell`: grows `cell` once per inbound request | listening |
+| `grow` | `delta` (or `genome`), `phenotype`, `experience`: splices, checks the laws, saves, and births a child | grown, stillborn |
 
-### Step 5: evolution
-Keep versioned genomes and lock files. A fitness function (coverage, bugs found, noise) decides which mutations survive. Mutations must stay versioned and reversible.
+`grow` is the sixth gene, added on purpose: it is F handed back to the genome, which closes the loop.
+
+### Memory
+
+- Scopes are created on demand.
+- `body.recall` sets the `{{var}}` lookup order.
+- `body.bones` scopes persist in the lock file. `heritable` bones (`dna`) are DNA, so any change bumps the lock version.
+- The kernel seeds two more scopes: `self` (the organism's own genome text) and `world` (only the env vars allowlisted in `action.world`).
+
+### Sense grammar
+
+A literal (deep equality), `exists`, `type:string|number|boolean|object|array|null`, or `<N` / `>N`.
+
+### The laws (`laws()`, checked at every birth, including children)
+
+- Every gene has chemistry, and its params and emits are ones the kernel can express.
+- A cell calls only genes and cells it declares.
+- Gene arguments are declared params. Cell arguments are the callee's `input`.
+- Every transition target is a state or an end.
+- `on:` listens only for events the callee can actually emit.
+- Every `$ref` is bound: by an input, an `as`, a `for` variable, or `state` / `trail`.
+- `trigger` may only spawn declared cells.
+- Every phenotype grows an existing cell.
+- **Guardrails** (`guardrails()`) for children:
+  - a child's budget may not exceed its parent's;
+  - a child may not read env vars its parent can't;
+  - growth depth is at most 3.
+
+## Status
+
+**Working (verified):**
+- `grow`, `load` and `mock` give the same results as the old hand-coded engine.
+- Learning (auto type-assertions after 3 stable runs) works.
+- `--strict` passes: there is no `fire()`, no `ORGAN_FOLDS`, and no cell name in the kernel.
+- Offline self-growth: `rehearse` grows `postman@0.4.0` with a new `history` cell. That child can run directly and can grow `0.5.0` itself.
+- Broken DNA is rejected with precise errors, and the mind retries using those errors as feedback.
+
+**Not yet:**
+1. **The real LLM mind has not been run.** `npm run evolve` is wired to `api.anthropic.com` using `claude-opus-5`, but no key was available. Expect prompt tuning, since the primer lives in the `mind` cell's `system` text.
+2. **No GUI skin.** Output is CLI log lines written in YAML. This is the biggest gap to "a Postman application".
+3. **Fitness is only "born and didn't die".** Nothing yet decides whether a mutation is *better*.
+4. **Adoption is manual.** A grown genome stays in `.organism/genomes/` until you copy it over the seed.
+5. **Kernel vocabulary creep.** Filters and transform operations are the part of the kernel most likely to bloat. Add one only when no composition of existing ones can do the job.
+
+## Roadmap
+
+1. **Real mind**
+   - Run `evolve` against the real API.
+   - Harden the primer.
+   - Add a `sense` step so the mind checks the child's *output* (e.g. coverage), not just survival.
+2. **Skin from DNA**
+   - Add a render gene (or `trigger: { on: ui }`), so cells can expose inputs, outputs and actions, and the body renders a UI from them: request editor, response panel, environments, history.
+   - The UI must be grown from the genome, not hand-built.
+3. **Fitness + selection**
+   - Score children (coverage, failures found, noise, size of DNA).
+   - Keep winners and archive losers.
+   - Add a lineage view.
+4. **Self-directed intents**
+   - The mind proposes its own next intent (e.g. from failed runs or an OpenAPI spec), not only ones a human types.
 
 ## Design rules for contributors (human or AI)
 
-- **Never add behaviour outside the layer model.** If something needs new capability, first ask whether it is a new gene. The gene set should stay tiny; five is the target and adding one needs a strong reason.
-- **Every new YAML concept must be validated in `checkInvariants`.**
-- **Prefer moving code into YAML over adding code.** Progress is measured by how much of `ribosome.ts` becomes generic.
-- **Zero-dependency spirit.** Only `yaml` and `tsx` for now.
-- **Learning must be reversible.** Learned state lives in `.organism/`, never by silently rewriting the user's genome.
-- **Keep the self-contained demo working.** `collection.yaml` grows its own mock world, so `npm run grow` must pass offline.
-
-## Suggested first prompt for Claude Code
-
-> Read CLAUDE.md. Implement Step 1 (generic cells) so that `fire()` is deleted and `http_call` behaviour comes entirely from its lifecycle YAML. Keep `npm run grow` and `npm run load` producing the same results. Add a `--strict` flag that fails if any hand-written folding remains.
+- **Never put feature behaviour in `ribosome.ts`.** If the genome can't express something, add the smallest *generic* capability (a gene operation or a filter) that lets it, then write the feature in YAML.
+- `npm run strict` must always pass.
+- Every new YAML concept must be checked in `laws()`, so a hallucinated genome gets rejected with a clear error message.
+- The gene set stays tiny. Six is the current count, and adding one needs a closure-level reason.
+- Learning and evolution are reversible. Grown genomes and learned memory live in `.organism/`, never as silent edits to the seed genome.
+- Zero-dependency spirit: only `yaml` and `tsx`.
+- `npm run grow` and `npm run rehearse` must pass offline.

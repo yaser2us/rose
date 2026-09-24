@@ -1,11 +1,15 @@
 {
   "name": "organism",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "scripts": {
     "grow": "tsx ribosome.ts postman.genome.yaml collection.yaml",
-    "load": "tsx ribosome.ts postman.genome.yaml collection.yaml --phenotype load_tester"
+    "load": "tsx ribosome.ts postman.genome.yaml collection.yaml --phenotype load_tester",
+    "mock": "tsx ribosome.ts postman.genome.yaml collection.yaml --phenotype mock_server",
+    "strict": "tsx ribosome.ts postman.genome.yaml collection.yaml --strict",
+    "rehearse": "tsx ribosome.ts postman.genome.yaml rehearsal.yaml --phenotype rehearse",
+    "evolve": "tsx ribosome.ts postman.genome.yaml collection.yaml --phenotype evolve"
   },
   "dependencies": { "tsx": "^4.19.0", "yaml": "^2.5.0" }
 }
