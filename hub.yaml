@@ -1,0 +1,23 @@
+# Experience for the hub species (a Zapier-like webhook automation hub).
+name: hub-selftest
+port: 4100
+samples:                      # webhooks the self-test fires at the hub
+  - path: /hooks/github
+    body: { action: opened, pull_request: { title: Grow a kidney, user: { login: yasser } } }
+  - path: /hooks/stripe
+    body: { type: payment_intent.succeeded, data: { object: { amount: 4200, currency: usd } } }
+  - path: /hooks/github
+    body: { action: closed, pull_request: { title: Old branch, user: { login: yasser } } }
+automations:                  # starting automations (used once the hub can automate)
+  - name: PR opened → chat
+    when: { path: /hooks/github, body.action: opened }
+    send:
+      method: POST
+      url: "http://localhost:4100/sink/chat"
+      body: { text: New PR, title: $req.body.pull_request.title, author: $req.body.pull_request.user.login }
+  - name: Payment → ledger
+    when: { path: /hooks/stripe, body.type: payment_intent.succeeded }
+    send:
+      method: POST
+      url: "http://localhost:4100/sink/ledger"
+      body: { cents: $req.body.data.object.amount, currency: $req.body.data.object.currency }

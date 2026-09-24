@@ -234,6 +234,7 @@ function chemistry(org: Organism): Record<string, (a: any) => Reaction | Promise
           const request = { method: q.method, path: q.url?.split("?")[0], headers: q.headers, body };
           try {
             const { output: o = {} } = await org.run(a.cell, { ...(a.with ?? {}), request });
+            org.flush();   // what a server learns survives the process
             s.writeHead(o.status ?? 200, { "content-type": "application/json", ...(o.headers ?? {}) }).end(JSON.stringify(o.body ?? null));
           } catch (e: any) { s.writeHead(500, { "content-type": "application/json" }).end(JSON.stringify({ error: e.message })); }
         });
@@ -276,6 +277,8 @@ function laws(g: any): string[] {
 
     for (const [s, st] of Object.entries<any>(d.lifecycle)) {
       if (!isMap(st)) { e.push(`${at(s)} is not a map`); continue; }
+      for (const k of Object.keys(st)) if (!["do", "as", "to", "on"].includes(k))
+        e.push(`${at(s)} has unknown key '${k}' (a state has only do, as, to, on${["for", "times"].includes(k) ? `; '${k}' belongs inside 'do'` : ""})`);
       need(!(st.to && st.on), `${at(s)} has both 'to' and 'on'`);
       const targets = [st.to, ...Object.values(st.on ?? {})].filter((t) => t !== undefined);
       need(targets.length, `${at(s)} leads nowhere`);
@@ -486,7 +489,13 @@ class Organism {
       child.genome.version = `${x}.${(y || 0) + 1}.0`;
     }
     const errors = [...laws(child), ...guardrails(this.genome, child)];
-    if (errors.length) return stillborn(errors);
+    if (errors.length) {   // keep the rejected DNA so failures can be read, not guessed
+      const dir = path.join(this.dir, "genomes");
+      fs.mkdirSync(dir, { recursive: true });
+      const file = path.join(dir, `${child.genome.name}-${child.genome.version}.rejected.yaml`);
+      fs.writeFileSync(file, `# rejected — ${errors.length} law(s) violated:\n${errors.map((x) => `#   ${x}`).join("\n")}\n` + dnaText(child));
+      return stillborn(errors, file);
+    }
 
     const dir = path.join(this.dir, "genomes");
     fs.mkdirSync(dir, { recursive: true });
@@ -502,7 +511,7 @@ class Organism {
     try {
       const r = await birth(child, {
         phenotype: a.phenotype, experience: a.experience, with: a.with, depth: this.depth + 1,
-        prefix: this.prefix + c.d("  │ "), budget: { spent: 0, max: this.budget.max - this.budget.spent },
+        prefix: this.prefix + c.d("  │ "), budget: { spent: 0, max: this.budget.max - this.budget.spent }, trial: true,
       });
       this.budget.spent += r.spent;
       if (r.fatal) { fs.renameSync(file, file.replace(/\.yaml$/, ".stillborn.yaml")); return stillborn([`child died in state '${r.state}'`], file); }
@@ -677,7 +686,7 @@ boot();
 
 // ─────────────── BIRTH ───────────────
 type BirthOpts = { phenotype?: string; experience?: any; with?: Record<string, any>;
-                   depth: number; prefix: string; budget?: Budget };
+                   depth: number; prefix: string; budget?: Budget; trial?: boolean };
 
 async function birth(genome: any, o: BirthOpts) {
   const errs = laws(genome);
@@ -729,7 +738,7 @@ async function birth(genome: any, o: BirthOpts) {
 
   let r;
   try { r = await org.run(pheno.grow, { ...(pheno.with ?? {}), ...(o.with ?? {}), experience }); }
-  finally { if (!pheno.persist) org.close(); }
+  finally { if (!pheno.persist || o.trial) org.close(); }   // a trial never outlives its judgement
   org.flush();
   return { ...r, fatal: (genome.cells[pheno.grow].fatal ?? []).includes(r.state), spent: budget.spent };
 }

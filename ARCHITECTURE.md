@@ -15,10 +15,11 @@ How software grows from a genome, from the big picture down to individual functi
 10. [Skin: the UI is DNA too](#10-skin-the-ui-is-dna-too)
 11. [Growth: how the organism writes its successor](#11-growth-how-the-organism-writes-its-successor)
 12. [Walkthroughs](#12-walkthroughs)
-13. [The current seed, cell by cell](#13-the-current-seed-cell-by-cell)
-14. [Kernel code map](#14-kernel-code-map)
-15. [Files on disk](#15-files-on-disk)
-16. [Limits and next steps](#16-limits-and-next-steps)
+13. [A second species: the hub (Zapier-lite)](#13-a-second-species-the-hub-zapier-lite)
+14. [The current seed, cell by cell](#14-the-current-seed-cell-by-cell)
+15. [Kernel code map](#15-kernel-code-map)
+16. [Files on disk](#16-files-on-disk)
+17. [Limits and next steps](#17-limits-and-next-steps)
 
 ---
 
@@ -240,7 +241,7 @@ The `Memory` class holds named **scopes**, which are created on demand.
 - **Bones:**
   - `dna: heritable` is learned DNA. Any change to it is a *mutation*, which bumps the lock's version and appends to its lineage.
   - `archive: kept` is remembered but not heritable, e.g. history and response shapes.
-  - Bones are saved (`flush`) when the root cell settles and after **every UI action**.
+  - Bones are saved (`flush`) when the root cell settles, after **every UI action**, and after **every inbound HTTP request** a `trigger` server handles.
 
 ## 9. The laws
 
@@ -250,6 +251,7 @@ The laws make self-growth safe. Every genome is checked at birth: the seed, anyt
 - every gene exists in the kernel's chemistry, with parameters and events it can express;
 - every cell calls only genes and cells it declares;
 - gene arguments are declared params, and cell arguments are the callee's `input`;
+- a state has only the keys `do`, `as`, `to`, `on` (a misplaced `for`/`times` gets a hint that it belongs inside `do`);
 - each state does exactly one thing, and has `to` **or** `on`, never both;
 - every transition target is a state or an end, and ends don't overlap live states;
 - `on:` listens only for events the callee can actually emit (a gene's `emits`, or a cell's `ends`, plus `mixed`/`none` for fan-out);
@@ -328,15 +330,16 @@ flowchart LR
 
 - The mind is an ordinary cell. It talks to Claude through the plain `signal` gene: an HTTP POST to `/v1/messages` with the `x-api-key` and `anthropic-version` headers. The kernel doesn't know Claude exists.
 - The **primer** is the `system` text inside the mind cell. It teaches the LLM the genome language, so the mind can rewrite its own primer too.
+- The prompt contains the intent, feedback from the last attempt, the **trial experience** (as YAML, so tests use real data and ports), and the organism's own genome.
 - The LLM returns a **delta**: only the entries to add or replace, as a fenced YAML block.
 
 ### The `grow` gene (kernel: `Organism.growChild`)
 
 1. **Splice** the delta into the parent: whole entries are replaced, and `null` deletes one. This is `a + b = ab`.
 2. **Version:** use the delta's version if it's newer, otherwise bump the minor version. Never reuse a file that already exists. Record `parent: name@version`.
-3. **Laws + guardrails.** Any violation means `stillborn` with the errors, and nothing is written.
+3. **Laws + guardrails.** Any violation means `stillborn` with the errors. The rejected DNA is saved as `*.rejected.yaml` with the errors in its header, so failures can be read rather than guessed.
 4. **Save** to `.organism/genomes/<name>-<version>.yaml`, using the compact serializer `dnaText()`.
-5. **Birth the child** against a trial experience (normally the `postman` phenotype on `collection.yaml`), with a slice of the parent's remaining budget. Its logs appear indented with `│`.
+5. **Birth the child** as a *trial* (its servers always close afterwards, even for `persist` phenotypes) against a trial experience (normally the `postman` phenotype on `collection.yaml`), with a slice of the parent's remaining budget. Its logs appear indented with `│`.
 6. If the child dies, its file is renamed to `*.stillborn.yaml`. If it survives, the result is `grown`.
 
 ### Adoption
@@ -402,7 +405,25 @@ Real runs so far:
 | Studio UI | Second attempt (the laws caught a broken `mind` cell on the first) | 2–5 min |
 | Newest-first fix | First attempt, 1-line change | 11 s |
 
-## 13. The current seed, cell by cell
+## 13. A second species: the hub (Zapier-lite)
+
+To prove the kernel isn't Postman in disguise, a second species was grown from `hub.genome.yaml`, an **egg** holding only the six genes and the `mind` cell. The experience is `hub.yaml` (port 4100, sample webhooks, starting automations). Every generation had to ship a `selftest` phenotype that proves itself.
+
+| Generation | Intent | Result |
+|---|---|---|
+| `hub@0.1.0` | (the egg) | 1 cell: `mind` |
+| `hub@0.2.0` | "Grow into a webhook inspector" | 6 cells: a catch-all server, an inbox and a self-test. Stillborn 3× first, which exposed builder gaps (below); grew once those were fixed. |
+| `hub@0.3.0` | "Add automations that transform and forward webhooks" | 9 cells. Automations are **data** (`when` sense map + `send` template), rendered with `$req.…` and delivered with `signal`, then logged to `archive.deliveries`. First attempt, about 3 min. |
+
+**Builder gaps this second species exposed (all fixed in the builder, not the app):**
+- The egg had no worked examples of fan-out, and the primer never said `for` goes *inside* `do`. The primer is now explicit, and a new law rejects unknown state keys with a hint.
+- The mind never saw the experience file, so it invented its own test data. The prompt now includes it, and the primer states the `experience` input convention.
+- Long-running servers only saved bones at startup, so data from HTTP requests was lost when the process stopped. Bones are now flushed after every inbound request.
+- A trial birth of a `persist` phenotype would never exit. Trials now always close their servers.
+
+Run it: `npx tsx ribosome.ts .organism/genomes/hub-0.3.0.yaml hub.yaml --phenotype serve` (or `selftest`).
+
+## 14. The current seed, cell by cell
 
 `postman@0.5.0`, 21 cells:
 
@@ -428,7 +449,7 @@ Real runs so far:
 | **Growth** | `mind` | signal, memory, transform, sense, grow | mind (itself) | Writes the next genome |
 | | `rehearsal` | — | mock, mind | Offline growth test |
 
-## 14. Kernel code map
+## 15. Kernel code map
 
 `ribosome.ts`, about 770 lines, has zero feature code:
 
@@ -445,13 +466,15 @@ Real runs so far:
 | Birth | `birth` | Laws → phenotype → experience → lock → memory → run → flush |
 | Entry | `main` | CLI flags: `--phenotype`, `--with k=v`, `--strict`, `--adopt` |
 
-## 15. Files on disk
+## 16. Files on disk
 
 ```
 ribosome.ts                 kernel
 postman.genome.yaml         seed genome (currently postman@0.5.0, adopted)
 collection.yaml             main experience (self-contained mock world, offline)
 rehearsal.yaml              experience where a mock plays the LLM
+hub.genome.yaml             the egg for the second species (genes + mind only)
+hub.yaml                    experience for the hub: port 4100, sample webhooks, automations
 .env                        CLAUDE_API_KEY (gitignored; loaded by npm scripts via --env-file-if-exists)
 .organism/                  gitignored, generated
   <experience>.lock.json      { born_from, version, lineage, bones: { dna, archive } }
@@ -462,7 +485,7 @@ CLAUDE.md                   handoff doc for AI sessions
 ARCHITECTURE.md             this document
 ```
 
-## 16. Limits and next steps
+## 17. Limits and next steps
 
 - **Fitness is only "born and didn't die".** Nothing yet scores whether a child is better than its parent.
 - **No hot-swap.** Evolve grows a child file, but the running studio keeps its own genome until it's restarted, or until you `--adopt`.

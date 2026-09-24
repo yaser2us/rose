@@ -1,0 +1,125 @@
+# 🥚 the egg: physics + a mind, and nothing else. Every app feature must be grown.
+genome: { name: hub, version: 0.1.0 }
+genes:
+  signal: { params: [ method, url, headers, body, log ], emits: [ received, failed, sent ] }
+  memory: { params: [ write, value, scope, write_all, read, fill, append, keep ], emits: [ written, read, missing ] }
+  sense: { params: [ subject, target, expect ], emits: [ pass, fail ] }
+  transform: { params: [ input, get, pick, merge, find, where, render, with, value, shape, prefix, stable, parse ], emits: [ done, none ] }
+  trigger: { params: [ on, port, cell, with, expose, title ], emits: [ listening, failed ] }
+  grow: { params: [ genome, delta, phenotype, experience, with ], emits: [ grown, stillborn ] }
+body:
+  recall: [ run, collection, env, global ]
+  bones:
+    dna: heritable
+    archive: kept
+action:
+  budget:
+    max_requests: 500
+  world: [ ANTHROPIC_API_KEY, CLAUDE_API_KEY ]
+cells:
+  mind:
+    genes: [ signal, memory, transform, sense, grow ]
+    cells: [ mind ]
+    input: [ intent, model, api, trial, phenotype, attempt, feedback, experience ]
+    lifecycle:
+      recalling: { do: { memory: { read: genome, scope: self } }, as: dna, to: keying }
+      keying: { do: { memory: { read: ANTHROPIC_API_KEY, scope: world } }, as: key, on: { read: announcing, missing: keying_alt } }
+      keying_alt: { do: { memory: { read: CLAUDE_API_KEY, scope: world } }, as: key, to: announcing }
+      announcing: { do: { signal: { log: '  💭 mind: "${intent}" (attempt ${attempt|default:0|add:1})' } }, to: asking }
+      asking:
+        do:
+          signal:
+            method: POST
+            url: $api
+            headers:
+              x-api-key: "$key|default:"
+              anthropic-version: 2023-06-01
+            body:
+              model: $model
+              max_tokens: 16000
+              system: |
+                You are the mind of a software organism. You grow new features by writing DNA.
+                The runtime (the ribosome) interprets a YAML genome; it has no feature code of
+                its own. Your only lever is a genome DELTA.
+
+                OUTPUT: a single ```yaml fenced block containing a DELTA and nothing else.
+                A delta has the same top-level sections as the genome (genome, genes, body,
+                action, cells, phenotypes). Each entry you give REPLACES the entry of the same
+                name (a whole cell at a time); `null` deletes it; entries you omit are kept.
+                Always include `genome: { version: <higher than current> }`.
+
+                LANGUAGE (read the current genome for many worked examples):
+                - A cell has `genes` (subset of the six genes), `cells` (other cells it may
+                  call), `input` (names it accepts), `lifecycle` (ordered states; the first is
+                  the entry), `ends` (terminal states), optional `fatal`, optional `output`.
+                - A state: `do: { <gene-or-cell>: <args> }`, optional `as: name` binding the
+                  result, then EITHER `to: next` OR `on: { <event>: next, "*": next }`.
+                  A gene's events are its `emits`. A cell's events are its `ends`.
+                  Fan-out goes INSIDE `do`, next to the call:
+                    `do: { some_cell: { x: $item }, for: { item: $list } }` (sequential) or
+                    `do: { some_cell: {...}, times: N }` (parallel). The `for` variable is
+                  bound only inside that `do`. The result is a list; the event is the shared
+                  event of all calls, or `mixed` / `none` (empty list).
+                  A state has ONLY these keys: do, as, to, on.
+                - Wiring: a string that is exactly `$name.path` is the raw value; `$${name.path}`
+                  inside text interpolates. Filters: default pad json yaml join len keys first
+                  last sum add map where all eq pct mark green red dim yellow (e.g.
+                  `$${list|len}`, `"$x|default:0"`). Every `$name` must be an input, an `as`
+                  binding, a `for` variable, or `state`/`trail`.
+                - Gene args must be among the gene's declared params. Cell args must be among
+                  the callee's `input`.
+                - A phenotype `{ grow: root_cell, with: {...}, persist }` runs `root_cell` with
+                  its `with` values PLUS `experience` (the parsed experience file) as input.
+                  Read test data and ports from `$experience`; never invent them.
+                - Memory scopes: recall chain + bones. `dna` is heritable, `archive` is kept.
+                  `memory: { read: "", scope: env }` reads a whole scope.
+                - Servers: `trigger: { on: http, port, cell, with }` grows `cell` per request
+                  (input `request`, output `{status, body}`). Emits `listening` or `failed`
+                  (port taken). A phenotype with `persist: true` keeps its servers alive.
+                - SKIN (the UI is DNA too): `trigger: { on: ui, port, title, expose: [cells], with: {...} }`
+                  serves a web app. Each exposed cell becomes a screen: a form built from its
+                  inputs, a button that runs it (UI values + `with` become its input), and a
+                  panel showing its output. Memory persists across clicks. Shape a screen with
+                  an optional `skin` on the cell:
+                    title, icon (one emoji), about (one sentence), action (button label),
+                    auto (true = run when opened), summary ("$${a} · $${b|len}" over the output),
+                    badge (output path shown as the status pill), good (badge values shown green),
+                    fields: { <input>: text|textarea|json|number  or  { widget, options (for
+                      widget: choose), default, placeholder, label, span: 1-12 grid columns } }
+                      Only listed fields are shown; omit `fields` to show every input.
+                    show: [ { label, path (into the output), as: auto|json|table|text,
+                      columns: { <Header>: <path in each row> } } ]  (rendered as tabs)
+                  Log lines a click produces appear in a Console tab.
+                The runtime rejects any delta that breaks these laws, and tells you why.
+              messages:
+                - role: user
+                  content: |-
+                    INTENT:
+                    ${intent}
+
+                    FEEDBACK FROM YOUR LAST ATTEMPT:
+                    ${feedback|default:none}
+
+                    THE EXPERIENCE YOUR CHILD IS TESTED WITH (phenotype ${phenotype}, file ${trial}):
+                    ${experience|yaml}
+
+                    YOUR CURRENT GENOME:
+                    ${dna}
+        as: reply
+        on:
+          received: locating
+          failed: puzzled
+      locating: { do: { transform: { find: $reply.body.content, where: { type: text } } }, as: said, on: { done: reading, none: puzzled } }
+      reading: { do: { transform: { parse: $said.text } }, as: delta, on: { done: growing, none: puzzled } }
+      growing: { do: { grow: { delta: $delta, phenotype: $phenotype, experience: $trial } }, as: child, on: { grown: celebrating, stillborn: mourning } }
+      celebrating: { do: { signal: { log: "  🌳 evolved → ${child.version|yellow} ${child.file|dim}" } }, to: evolved }
+      mourning: { do: { signal: { log: "  💀 stillborn: ${child.errors|join:; |red}" } }, to: weighing }
+      weighing: { do: { sense: { subject: $attempt|default:0, expect: <2 } }, on: { pass: retrying, fail: extinct } }
+      retrying: { do: { mind: { intent: $intent, model: $model, api: $api, trial: $trial, phenotype: $phenotype, attempt: $attempt|default:0|add:1, feedback: "$child.errors|join:; ", experience: $experience } }, as: child, on: { evolved: evolved, "*": extinct } }
+      puzzled: { do: { signal: { log: "  ✘ mind got no usable DNA: ${reply.status}${reply.error} ${reply.body.error.message}${delta.error}" } }, to: confused }
+    ends: [ evolved, extinct, confused ]
+    fatal: [ extinct, confused ]
+    output: $child
+phenotypes:
+  evolve: { grow: mind, with: { intent: "(pass --with intent=...)", model: claude-opus-5, api: "https://api.anthropic.com/v1/messages", trial: hub.yaml, phenotype: selftest } }
+active_phenotype: evolve

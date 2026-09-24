@@ -170,7 +170,7 @@ cells:
   mind:
     genes: [ signal, memory, transform, sense, grow ]
     cells: [ mind ]
-    input: [ intent, model, api, trial, phenotype, attempt, feedback ]
+    input: [ intent, model, api, trial, phenotype, attempt, feedback, experience ]
     lifecycle:
       recalling: { do: { memory: { read: genome, scope: self } }, as: dna, to: keying }
       keying: { do: { memory: { read: ANTHROPIC_API_KEY, scope: world } }, as: key, on: { read: announcing, missing: keying_alt } }
@@ -205,8 +205,12 @@ cells:
                 - A state: `do: { <gene-or-cell>: <args> }`, optional `as: name` binding the
                   result, then EITHER `to: next` OR `on: { <event>: next, "*": next }`.
                   A gene's events are its `emits`. A cell's events are its `ends`.
-                  Fan-out: add `for: { item: $list }` (sequential) or `times: N` (parallel);
-                  the result is a list and the event is the shared event or `mixed`/`none`.
+                  Fan-out goes INSIDE `do`, next to the call:
+                    `do: { some_cell: { x: $item }, for: { item: $list } }` (sequential) or
+                    `do: { some_cell: {...}, times: N }` (parallel). The `for` variable is
+                  bound only inside that `do`. The result is a list; the event is the shared
+                  event of all calls, or `mixed` / `none` (empty list).
+                  A state has ONLY these keys: do, as, to, on.
                 - Wiring: a string that is exactly `$name.path` is the raw value; `$${name.path}`
                   inside text interpolates. Filters: default pad json yaml join len keys first
                   last sum add map where all eq pct mark green red dim yellow (e.g.
@@ -214,6 +218,9 @@ cells:
                   binding, a `for` variable, or `state`/`trail`.
                 - Gene args must be among the gene's declared params. Cell args must be among
                   the callee's `input`.
+                - A phenotype `{ grow: root_cell, with: {...}, persist }` runs `root_cell` with
+                  its `with` values PLUS `experience` (the parsed experience file) as input.
+                  Read test data and ports from `$experience`; never invent them.
                 - Memory scopes: recall chain + bones. `dna` is heritable, `archive` is kept.
                   `memory: { read: "", scope: env }` reads a whole scope.
                 - Servers: `trigger: { on: http, port, cell, with }` grows `cell` per request
@@ -243,6 +250,9 @@ cells:
                     FEEDBACK FROM YOUR LAST ATTEMPT:
                     ${feedback|default:none}
 
+                    THE EXPERIENCE YOUR CHILD IS TESTED WITH (phenotype ${phenotype}, file ${trial}):
+                    ${experience|yaml}
+
                     YOUR CURRENT GENOME:
                     ${dna}
         as: reply
@@ -255,7 +265,7 @@ cells:
       celebrating: { do: { signal: { log: "  🌳 evolved → ${child.version|yellow} ${child.file|dim}" } }, to: evolved }
       mourning: { do: { signal: { log: "  💀 stillborn: ${child.errors|join:; |red}" } }, to: weighing }
       weighing: { do: { sense: { subject: $attempt|default:0, expect: <2 } }, on: { pass: retrying, fail: extinct } }
-      retrying: { do: { mind: { intent: $intent, model: $model, api: $api, trial: $trial, phenotype: $phenotype, attempt: $attempt|default:0|add:1, feedback: "$child.errors|join:; " } }, as: child, on: { evolved: evolved, "*": extinct } }
+      retrying: { do: { mind: { intent: $intent, model: $model, api: $api, trial: $trial, phenotype: $phenotype, attempt: $attempt|default:0|add:1, feedback: "$child.errors|join:; ", experience: $experience } }, as: child, on: { evolved: evolved, "*": extinct } }
       puzzled: { do: { signal: { log: "  ✘ mind got no usable DNA: ${reply.status}${reply.error} ${reply.body.error.message}${delta.error}" } }, to: confused }
     ends: [ evolved, extinct, confused ]
     fatal: [ extinct, confused ]
