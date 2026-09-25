@@ -1,12 +1,56 @@
-# 🧬 hub: a Zapier-like webhook hub, grown by the mind from examples/egg — adopted from hub-0.4.2 (lineage: hub@0.4.1)
-genome: { name: hub, version: 0.4.2, parent: hub@0.4.1 }
+# 🧬 hub: a Zapier-like webhook hub, grown by the mind from examples/egg — adopted from hub-0.5.1 (lineage in genome.history)
+genome:
+  name: hub
+  version: 0.5.1
+  parent: hub@0.5.0
+  purpose: "A Zapier-like automation hub: receive webhooks from any service, and let people define, test and monitor automations that transform and forward them."
+  history:
+    - version: 0.1.0
+      reason: "the egg: genes and a mind"
+    - version: 0.2.0
+      reason: Grow into a webhook inspector
+    - version: 0.3.0
+      reason: Add automations that transform and forward webhooks
+    - version: 0.4.0
+      reason: "Give yourself a web UI: Inbox, Automations, Test webhook, Deliveries"
+    - version: 0.4.1
+      reason: Newest-first ordering was wrong; use the reverse filter
+    - version: 0.4.2
+      reason: Add an Evolve screen
+    - version: 0.5.0
+      reason: |
+        Add health monitoring for automations, without touching the mind or muse cells and without
+        changing any existing cell, screen, phenotype or experience sample.
+        1) Add a cell `automation_health` (genes: transform, sense; input: automation, deliveries) that
+           computes for one automation: name, fired = deliveries matching that automation name
+           (use `$deliveries|where:automation:$automation.name`), ok = those with ok true, failed =
+           fired minus ok (count via |len), and last_status = last matching delivery's status; it ends
+           in one state and outputs that record.
+        2) Add a cell `ui_monitor` (genes: memory, transform; cells: automation_health; input: experience)
+           that reads `automations` and `deliveries` from archive (empty lists when missing), fans out
+           `automation_health` over the automations, and outputs
+           { total: <deliveries|len>, ok: <deliveries|where:ok:true|len>, failed: <total - ok>,
+             rate: <ok as a percentage of total, using the pct filter>, automations: <the health rows> }.
+           Give it a skin: title "Monitor", icon 📊, about one sentence, action "Refresh", auto true,
+           summary like "${ok}/${total} deliveries ok · ${rate}%", badge failed, good [0], fields {},
+           and a table show over `automations` with columns Automation: name, Fired: fired, OK: ok,
+           Failed: failed, Last: last_status.
+        3) Expose `ui_monitor` in studio_root's `cells` and in the ui trigger's `expose` list, after
+           ui_deliveries.
+        4) Extend selftest_root so it keeps every current check and additionally, after `routing`
+           passes, calls `ui_monitor` with the experience, then senses that the monitor's `failed`
+           count is 0 and its `total` is 2 before judging; log the monitor summary on success and a
+           clear ✘ line with the failed/total numbers on mismatch (a failing branch must reach the
+           existing `failed` state).
+    - version: 0.5.1
+      reason: "Bug: the Monitor screen summary shows a bare '%' because no rate is ever computed. Compute rate = ok ÷ total × 100 rounded to 1 decimal (0 when total is 0) using the div, mul and round filters, include it in the monitor output, and give each automation row its own rate the same way. Change nothing else; do not modify the mind or muse cells."
 genes:
   signal: { params: [ method, url, headers, body, log ], emits: [ received, failed, sent ] }
   memory: { params: [ write, value, scope, write_all, read, fill, append, keep ], emits: [ written, read, missing ] }
   sense: { params: [ subject, target, expect ], emits: [ pass, fail ] }
   transform: { params: [ input, get, pick, merge, find, where, render, with, value, shape, prefix, stable, parse ], emits: [ done, none ] }
   trigger: { params: [ on, port, cell, with, expose, title ], emits: [ listening, failed ] }
-  grow: { params: [ genome, delta, phenotype, experience, with ], emits: [ grown, stillborn ] }
+  grow: { params: [ genome, delta, phenotype, experience, with, reason ], emits: [ grown, stillborn ] }
 body:
   recall: [ run, collection, env, global ]
   bones:
@@ -35,10 +79,12 @@ cells:
             headers:
               x-api-key: "$key|default:"
               anthropic-version: 2023-06-01
+              anthropic-beta: server-side-fallback-2026-07-01
             body:
               model: $model
               max_tokens: 64000
               stream: true
+              fallbacks: default
               system: |
                 You are the mind of a software organism. You grow new features by writing DNA.
                 The runtime (the ribosome) interprets a YAML genome; it has no feature code of
@@ -119,7 +165,7 @@ cells:
       unstreamed: { do: { transform: { find: $reply.body.content, where: { type: text } } }, as: block, on: { done: unwrapping, none: puzzled } }
       unwrapping: { do: { transform: { value: $block.text } }, as: said, on: { done: reading, none: puzzled } }
       reading: { do: { transform: { parse: $said } }, as: delta, on: { done: growing, none: puzzled } }
-      growing: { do: { grow: { delta: $delta, phenotype: $phenotype, experience: $trial } }, as: child, on: { grown: celebrating, stillborn: mourning } }
+      growing: { do: { grow: { delta: $delta, phenotype: $phenotype, experience: $trial, reason: $intent } }, as: child, on: { grown: celebrating, stillborn: mourning } }
       celebrating: { do: { signal: { log: "  🌳 evolved → ${child.version|yellow} ${child.file|dim}" } }, to: evolved }
       mourning: { do: { signal: { log: "  💀 stillborn: ${child.errors|join:; |red}" } }, to: weighing }
       weighing: { do: { sense: { subject: $attempt|default:0, expect: <2 } }, on: { pass: retrying, fail: extinct } }
@@ -194,7 +240,7 @@ cells:
     fatal: [ dead ]
   selftest_root:
     genes: [ signal, memory, sense, transform ]
-    cells: [ hub, probe, check_delivery, check_route ]
+    cells: [ hub, probe, check_delivery, check_route, ui_monitor ]
     input: [ experience ]
     lifecycle:
       clearing: { do: { memory: { write: deliveries, scope: archive, value: [] } }, to: opening }
@@ -208,7 +254,12 @@ cells:
       nothing: { do: { transform: { value: [] } }, as: deliveries, to: counting }
       counting: { do: { sense: { subject: $deliveries|len, expect: 2 } }, on: { pass: inspecting, fail: miscounted } }
       inspecting: { do: { check_delivery: { delivery: $item }, for: { item: $deliveries } }, as: checks, on: { good: routing, "*": misdelivered } }
-      routing: { do: { check_route: { automation: $item, deliveries: $deliveries }, for: { item: $experience.automations } }, as: routes, on: { good: judging, "*": misrouted } }
+      routing: { do: { check_route: { automation: $item, deliveries: $deliveries }, for: { item: $experience.automations } }, as: routes, on: { good: monitoring, "*": misrouted } }
+      monitoring: { do: { ui_monitor: { experience: $experience } }, as: monitor, on: { shown: health_failed, "*": unhealthy } }
+      health_failed: { do: { sense: { subject: $monitor.failed, expect: 0 } }, on: { pass: health_total, fail: unhealthy } }
+      health_total: { do: { sense: { subject: $monitor.total, expect: 2 } }, on: { pass: health_ok, fail: unhealthy } }
+      health_ok: { do: { signal: { log: "  📊 monitor: ${monitor.ok}/${monitor.total} deliveries ok · ${monitor.rate}% · ${monitor.failed} failed" } }, to: judging }
+      unhealthy: { do: { signal: { log: "  ✘ monitor mismatch: failed=${monitor.failed|red} total=${monitor.total|red} (expected failed 0, total 2)" } }, to: failed }
       judging: { do: { sense: { subject: $verdict, expect: ok } }, on: { pass: healthy, fail: broken } }
       healthy: { do: { signal: { log: "  ✅ all ${experience.samples|len} samples passed · ${deliveries|len} automation(s) forwarded" } }, to: passed }
       broken: { do: { signal: { log: "  ✘ some of ${experience.samples|len} samples failed" } }, to: failed }
@@ -370,7 +421,7 @@ cells:
           columns: { Automation: automation, URL: url, Status: status, OK: ok, Body: body }
   studio_root:
     genes: [ signal, trigger ]
-    cells: [ hub, ui_inbox, ui_automations, ui_test, ui_deliveries, ui_evolve ]
+    cells: [ hub, ui_inbox, ui_automations, ui_test, ui_deliveries, ui_monitor, ui_evolve, muse ]
     input: [ experience, model, api, trial, phenotype ]
     lifecycle:
       opening: { do: { hub: { port: $experience.port, automations: $experience.automations } }, on: { open: announcing, blocked: failing } }
@@ -387,7 +438,7 @@ cells:
               api: $api
               trial: $trial
               phenotype: $phenotype
-            expose: [ ui_inbox, ui_automations, ui_test, ui_deliveries, ui_evolve ]
+            expose: [ ui_inbox, ui_automations, ui_test, ui_deliveries, ui_monitor, ui_evolve, muse ]
         on:
           listening: opened
           failed: busy
@@ -423,9 +474,167 @@ cells:
         - label: Errors
           path: errors
           as: json
+  muse:
+    genes: [ signal, memory, transform, sense ]
+    cells: [ mind ]
+    input: [ model, api, trial, phenotype, experience, grow ]
+    lifecycle:
+      recalling: { do: { memory: { read: genome, scope: self } }, as: dna, to: sensing }
+      sensing: { do: { memory: { read: physics, scope: self } }, as: physics, to: remembering }
+      remembering: { do: { memory: { read: "", scope: archive } }, as: archive, to: learning }
+      learning: { do: { memory: { read: "", scope: dna } }, as: learned, to: keying }
+      keying: { do: { memory: { read: ANTHROPIC_API_KEY, scope: world } }, as: key, on: { read: announcing, missing: keying_alt } }
+      keying_alt: { do: { memory: { read: CLAUDE_API_KEY, scope: world } }, as: key, to: announcing }
+      announcing: { do: { signal: { log: "  🔮 muse: reading my purpose, lineage, memory and DNA…" } }, to: asking }
+      asking:
+        do:
+          signal:
+            method: POST
+            url: $api
+            headers:
+              x-api-key: "$key|default:"
+              anthropic-version: 2023-06-01
+              anthropic-beta: server-side-fallback-2026-07-01
+            body:
+              model: $model
+              max_tokens: 32000
+              stream: true
+              fallbacks: default
+              system: |
+                You are the muse of a software organism. The organism grows itself: its mind
+                turns an intent (plain English) into a DNA change, the laws check it, and a
+                trial proves it. Your only job is to choose the NEXT intent.
+
+                Choose the single most valuable next step toward the organism's purpose
+                (genome.purpose), judged from evidence: what it has experienced (memory),
+                what failed or looks weak, what its DNA lacks for its purpose, and what its
+                lineage already did (genome.history — never repeat or undo a past intent).
+                Prefer one small, testable step the kernel vocabulary can express. Tell the
+                mind what must not change (always: do not modify the mind or muse cells).
+                If the organism has a selftest phenotype, the step must keep it passing and
+                extend it to cover the new behaviour.
+
+                OUTPUT: a single ```yaml fenced block and nothing else, with exactly:
+                  intent: <the instruction to the mind, specific enough to implement>
+                  why: <one or two sentences>
+                  evidence: [ <short facts from the input that you relied on> ]
+              messages:
+                - role: user
+                  content: |-
+                    WHAT I REMEMBER (latest entries of each list):
+                    ${archive|redact|brief:3|yaml}
+
+                    WHAT I HAVE LEARNED:
+                    ${learned|redact|brief:3|yaml}
+
+                    THE EXPERIENCE MY TRIALS USE (phenotype ${phenotype}, file ${trial}):
+                    ${experience|redact|brief:5|yaml}
+
+                    THE KERNEL'S EXACT VOCABULARY:
+                    ${physics|yaml}
+
+                    MY GENOME (see genome.purpose and genome.history):
+                    ${dna}
+        as: reply
+        on:
+          received: locating
+          failed: puzzled
+      locating: { do: { sense: { subject: $reply.body, expect: type:array } }, on: { pass: streamed, fail: unstreamed } }
+      streamed: { do: { transform: { value: "$reply.body|where:data.delta.type:text_delta|map:data.delta.text|join:" } }, as: said, on: { done: reading, none: puzzled } }
+      unstreamed: { do: { transform: { find: $reply.body.content, where: { type: text } } }, as: block, on: { done: unwrapping, none: puzzled } }
+      unwrapping: { do: { transform: { value: $block.text } }, as: said, on: { done: reading, none: puzzled } }
+      reading: { do: { transform: { parse: $said } }, as: proposal, on: { done: checking, none: puzzled } }
+      checking: { do: { sense: { subject: $proposal.intent, expect: type:string } }, on: { pass: telling, fail: puzzled } }
+      telling:
+        {
+          do:
+            {
+              signal:
+                {
+                  log: "  💡 next intent: ${proposal.intent}
+
+                    \     why: ${proposal.why}
+
+                    \     evidence: ${proposal.evidence|join: · }"
+                }
+            },
+          to: deciding
+        }
+      deciding: { do: { sense: { subject: $grow|default:no, expect: yes } }, on: { pass: growing, fail: proposed } }
+      growing: { do: { mind: { intent: $proposal.intent, model: $model, api: $api, trial: $trial, phenotype: $phenotype, experience: $experience } }, as: child, on: { evolved: grown, "*": failed } }
+      puzzled:
+        do:
+          signal:
+            log: "  ✘ muse got no usable proposal: ${reply.status}${reply.error} ${reply.body|where:event:error|map:data.error.message|join: } stop=${reply.body|where:event:message_delta|map:data.delta.stop_reason|join:} ${reply.body|where:event:message_delta|map:data.delta.stop_details|json} ${proposal.error}"
+        to: confused
+    ends: [ proposed, grown, failed, confused ]
+    fatal: [ failed, confused ]
+    output:
+      intent: $proposal.intent
+      why: $proposal.why
+      evidence: $proposal.evidence
+      child: $child
+    skin:
+      title: Muse
+      icon: 🔮
+      about: The organism reads its purpose, lineage and memory, and proposes what to grow next. Choose grow = yes to let it grow the proposal too.
+      action: Suggest next step
+      fields:
+        grow: { widget: choose, options: [ no, yes ], default: no }
+      summary: ${intent}
+      show:
+        - label: Proposal
+          path: ""
+          as: auto
+  automation_health:
+    genes: [ transform, sense ]
+    input: [ automation, deliveries ]
+    lifecycle:
+      finding: { do: { transform: { value: $deliveries|where:automation:$automation.name } }, as: fired, on: { "*": okaying } }
+      okaying: { do: { transform: { value: $fired|where:ok:true } }, as: ok, on: { "*": sizing } }
+      sizing: { do: { transform: { value: $fired|len } }, as: fired_n, on: { "*": oking } }
+      oking: { do: { transform: { value: $ok|len } }, as: ok_n, on: { "*": rating } }
+      rating: { do: { transform: { value: $ok_n|div:$fired_n|mul:100|round:1 } }, as: rate, on: { "*": weighing } }
+      weighing: { do: { sense: { subject: $ok_n, expect: $fired_n } }, on: { "*": shaping } }
+      shaping: { do: { transform: { value: { name: $automation.name, fired: $fired_n, ok: $ok_n, failed: $fired|where:ok:false|len, rate: $rate, last_status: $fired|map:status|last } } }, as: out, to: healthy }
+    ends: [ healthy ]
+    output: $out
+  ui_monitor:
+    genes: [ memory, transform ]
+    cells: [ automation_health ]
+    input: [ experience ]
+    lifecycle:
+      loading: { do: { memory: { read: automations, scope: archive } }, as: automations, on: { read: fetching, missing: no_autos } }
+      no_autos: { do: { transform: { value: [] } }, as: automations, to: fetching }
+      fetching: { do: { memory: { read: deliveries, scope: archive } }, as: deliveries, on: { read: counting, missing: no_deliveries } }
+      no_deliveries: { do: { transform: { value: [] } }, as: deliveries, to: counting }
+      counting: { do: { transform: { value: $deliveries|len } }, as: total, on: { "*": okaying } }
+      okaying: { do: { transform: { value: $deliveries|where:ok:true|len } }, as: ok, on: { "*": rating } }
+      rating: { do: { transform: { value: $ok|div:$total|mul:100|round:1 } }, as: rate, on: { "*": scoring } }
+      scoring: { do: { automation_health: { automation: $item, deliveries: $deliveries }, for: { item: $automations } }, as: rows, on: { "*": shaping } }
+      shaping: { do: { transform: { value: { total: $total, ok: $ok, failed: $deliveries|where:ok:false|len, rate: $rate, automations: $rows } } }, as: out, to: shown }
+    ends: [ shown ]
+    output: $out
+    skin:
+      title: Monitor
+      icon: 📊
+      about: Delivery health for every automation, at a glance.
+      action: Refresh
+      auto: true
+      summary: ${ok}/${total} deliveries ok · ${rate}%
+      badge: failed
+      good: [ 0 ]
+      fields: {}
+      show:
+        - label: Automations
+          path: automations
+          as: table
+          columns: { Automation: name, Fired: fired, OK: ok, Failed: failed, Rate: rate, Last: last_status }
 phenotypes:
   evolve: { grow: mind, with: { intent: (pass --with intent=...), model: claude-opus-5, api: https://api.anthropic.com/v1/messages, trial: experience.yaml, phenotype: selftest } }
   serve: { grow: serve_root, persist: true }
   selftest: { grow: selftest_root }
   studio: { grow: studio_root, with: { model: claude-opus-5, api: https://api.anthropic.com/v1/messages, trial: experience.yaml, phenotype: selftest }, persist: true }
+  muse: { grow: muse, with: { model: claude-opus-5, api: https://api.anthropic.com/v1/messages, trial: experience.yaml, phenotype: selftest } }
+  autopilot: { grow: muse, with: { model: claude-opus-5, api: https://api.anthropic.com/v1/messages, trial: experience.yaml, phenotype: selftest, grow: yes } }
 active_phenotype: evolve

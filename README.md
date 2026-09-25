@@ -31,7 +31,7 @@ Everything above runs offline. An LLM is only needed to **grow new features** (s
 |---|---|---|
 | [`examples/hello`](examples/hello) | The whole language in about 60 commented lines: one cell, memory, a CLI root and a UI root. **Start here.** | `npm run hello` · `npm run hello:studio` → :4300 |
 | Postman (repo root) | A full API client grown from `postman.genome.yaml` | `npm run grow` · `npm run load` · `npm run studio` → :4000 |
-| [`examples/hub`](examples/hub) | A Zapier-like webhook hub, grown by the mind from the egg | `npm run hub:test` · `npm run hub:studio` → :4101 |
+| [`examples/hub`](examples/hub) | A Zapier-like webhook hub, grown by the mind from the egg. Its latest feature was chosen by the organism itself. | `npm run hub:test` · `npm run hub:studio` → :4101 |
 | [`examples/egg`](examples/egg) | Genes and a mind, nothing else. Grow **your** app from here. | See [Grow your own app](#grow-your-own-app-from-the-egg) |
 
 ## The idea in one picture
@@ -95,6 +95,19 @@ npx tsx ribosome.ts --adopt .organism/genomes/postman-0.6.0.yaml postman.genome.
 
 Both studios (Postman and hub) have an **Evolve** screen, so you can do all of this from the browser.
 
+### Or let it choose: muse and autopilot
+
+Every genome states a `purpose` and carries its `history` (the intents that made it). The **muse** cell reads those, plus what the organism remembers (with secrets redacted) and its DNA, and proposes the single most valuable next step, citing its evidence:
+
+```bash
+npm run muse            # Postman proposes its next intent (proposal only, nothing grows)
+npm run hub:autopilot   # the hub proposes AND grows it; the child still has to pass the laws and its self-test
+```
+
+Real example: the hub's muse noticed its purpose promises people can *monitor* automations, but nothing added up the `ok` flags on deliveries. It proposed a Monitor screen, and the mind grew it (`hub@0.5.0`). The studios also have a 🔮 **Muse** screen with a `grow: no/yes` choice.
+
+Autopilot is still judged only by the self-test. Test what it grows yourself: in that example a per-automation breakdown was silently zero until it was fixed (`hub@0.5.1`).
+
 Each evolution is one or more Claude API calls, billed to your key. Small changes take 10 to 60 seconds; a whole new UI takes a few minutes.
 
 ## Grow your own app from the egg
@@ -127,6 +140,8 @@ Tips that made the hub grow cleanly:
 | `npm run studio` | Postman web UI (:4000) |
 | `npm run hub:test` / `hub:studio` | Hub self-test, or its web UI (:4101; the webhooks go to :4100) |
 | `npm run evolve -- --with intent="…"` | Grow the Postman species (needs a key) |
+| `npm run muse` / `hub:muse` | The organism proposes its own next intent (needs a key) |
+| `npm run autopilot` / `hub:autopilot` | Propose **and** grow it (needs a key) |
 | `npm run rehearse` | Offline growth test: a mock plays the LLM |
 | `npm run strict` | Prove the ribosome contains no app-specific names |
 | `npx tsx ribosome.ts <genome> <experience> [--phenotype p] [--with k=v]` | Run any genome |
@@ -139,6 +154,7 @@ Learned memory and grown genomes live in `.organism/` next to each experience fi
 - **Everything the mind writes goes through the laws** before it runs, and grown genomes live only in `.organism/`, so a mutation is one file you can delete.
 - **Children never get more power than their parent**: no bigger request budget, no extra secrets, and at most 3 generations deep.
 - **Only allowlisted environment variables are visible** (`action.world` in the genome).
+- **Memory is redacted before it reaches an LLM.** Headers, tokens, passwords and bearer values are stripped (the `redact` filter). Claude calls use server-side refusal fallback.
 - **Web UIs listen on 127.0.0.1 only** and refuse cross-site requests.
 - **The ribosome itself never evolves.** Only YAML does. See [ARCHITECTURE.md §11](ARCHITECTURE.md#11-growth-how-the-organism-writes-its-successor) for why.
 
@@ -150,6 +166,6 @@ Learned memory and grown genomes live in `.organism/` next to each experience fi
 ## Status
 
 This is an experiment that works. Both species run, grow and pass their tests. Not built yet:
-- **Fitness scoring.** Children are judged by "passed its self-test", not by "better than its parent".
+- **Fitness scoring.** Children are judged by "passed its self-test", not by "better than its parent". Autopilot makes this matter more.
 - **Hot-swapping** a running app to its grown child.
 - **Richer UI widgets.** The skin is forms, tables and tabs today.

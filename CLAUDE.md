@@ -45,6 +45,7 @@ npm run rehearse   # the mind grows a child genome offline (a mock plays the LLM
 npm run studio     # the grown UI at http://localhost:4000 (needs a genome with a `studio` phenotype)
 npm run hello      # examples/hello (hello:studio → :4300)
 npm run hub:test   # examples/hub self-test (hub:studio → :4101, webhooks on :4100)
+npm run muse       # the organism proposes its next intent (autopilot / hub:autopilot also grows it)
 npx tsx ribosome.ts --adopt .organism/genomes/<child>.yaml postman.genome.yaml   # make a child the seed
 npm run evolve -- --with intent="add a history of every request"
 npx tsx ribosome.ts .organism/genomes/postman-0.4.0.yaml collection.yaml   # run a grown child
@@ -82,7 +83,7 @@ http_call:
 |---|---|
 | `"$a.b"` (the whole string) | the raw value |
 | `"text ${a.b}"` | interpolated text |
-| `\|filter:arg` | applies a filter: `default pad json yaml join len keys first last sum add map where all eq pct mark green red dim yellow` |
+| `\|filter:arg` | applies a filter (meanings in `FILTER_DOCS`, published in `self.physics`): `default pad json yaml join len keys first last reverse brief redact sum add mul div round map where all eq pct mark green red dim yellow`. An argument starting with `$` is read from scope. |
 | `$$` | escape for a literal `$` |
 
 `{{var}}` is **not** wiring. It is runtime templating, done by `memory: { fill: … }` using the `body.recall` chain.
@@ -146,6 +147,7 @@ A literal (deep equality), `exists`, `type:string|number|boolean|object|array|nu
 - Learning (auto type-assertions after 3 stable runs) works.
 - `--strict` passes: there is no `fire()`, no `ORGAN_FOLDS`, and no cell name in the kernel.
 - **Second species:** `examples/hub` was grown from `examples/egg` (genes + mind only) in 5 intents. See ARCHITECTURE.md §13.
+- **Self-directed growth:** every genome has `genome.purpose` and `genome.history` (the kernel stamps each child's `reason`). The `muse` cell proposes the next intent from purpose, lineage, redacted memory and DNA. `autopilot` = muse + mind. The hub's muse chose and grew `hub@0.5.0` (monitoring).
 - **Isolated trials:** a trial birth gets its own port namespace (free ports, with its localhost traffic routed to them), so Evolve works inside a running app. The hub grew `0.4.3` from its own Evolve screen while live.
 - Offline self-growth: `rehearse` grows `postman@0.4.0` with a new `history` cell. That child can run directly and can grow `0.5.0` itself.
 - Broken DNA is rejected with precise errors, and the mind retries using those errors as feedback.

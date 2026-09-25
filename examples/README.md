@@ -10,7 +10,7 @@ npx tsx ribosome.ts examples/<name>/genome.yaml examples/<name>/experience.yaml 
 |---|---|---|---|
 | [`hello/`](hello) | A human, about 60 commented lines | `hello` (CLI), `studio` (UI :4300) | No |
 | [`egg/`](egg) | A human: only the genes and the mind | `evolve` | Yes, to grow anything |
-| [`hub/`](hub) | **The mind**, from `egg/`, in 5 intents | `serve`, `selftest`, `studio` (UI :4101, webhooks :4100), `evolve` | Only for `evolve` |
+| [`hub/`](hub) | **The mind**, from `egg/`, in 7 intents (one chosen by its muse) | `serve`, `selftest`, `studio` (UI :4101, webhooks :4100), `evolve`, `muse`, `autopilot` | Only for `evolve` / `muse` / `autopilot` |
 
 ## How `hub` was grown
 
@@ -24,6 +24,8 @@ Every step was one intent passed to `--phenotype evolve`. Each child had to pass
 | 0.4.0 | "Give yourself a web UI" (Inbox, Automations, Test webhook, Deliveries) | 17 |
 | 0.4.1 | "Newest first is wrong; use `\|reverse`" | 15 |
 | 0.4.2 | "Add an Evolve screen" | 16 |
+| 0.5.0 | *chosen by its own muse:* "Add health monitoring for automations" | 19 |
+| 0.5.1 | "The Monitor rate shows a bare %; compute it with div/mul/round" | 19 |
 
 Try it:
 

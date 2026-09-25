@@ -101,7 +101,7 @@ The last arrow, from the `grow` gene back into the laws, is what closes the loop
 A genome is one YAML file with these sections:
 
 ```yaml
-genome:     { name: postman, version: 0.5.0, parent: postman@0.4.0 }   # identity + lineage
+genome:     { name, version, parent, purpose, history: [{ version, reason }] }   # identity, goal, lineage of intents
 genes:      { signal: { params: [...], emits: [...] }, ... }            # which physics this organism uses
 body:       { recall: [run, collection, env, global], bones: { dna: heritable, archive: kept } }
 action:     { budget: { max_requests: 500 }, world: [ANTHROPIC_API_KEY, CLAUDE_API_KEY] }
@@ -199,7 +199,9 @@ This is how data flows between states. The kernel evaluates it; `evaluate()` in 
 Paths use dots and indices: `calls.0.response.body.id`.
 
 **Filters:**
-`default` `pad` `json` `yaml` `join` `len` `keys` `first` `last` `reverse` `sum` `add` `map` `where` `all` `eq` `pct` `mark` `green` `red` `dim` `yellow`
+`default` `pad` `json` `yaml` `join` `len` `keys` `first` `last` `reverse` `brief` `redact` `sum` `add` `mul` `div` `round` `map` `where` `all` `eq` `pct` `mark` `green` `red` `dim` `yellow`
+
+Each filter's meaning lives in `FILTER_DOCS` and is published to the organism in `self.physics`. **A filter argument that starts with `$` is read from scope**, e.g. `$deliveries|where:automation:$item.name|len`. `pct` is a percentile, not a percentage; rates use `div`, `mul` and `round`. `redact` removes secret-looking keys before data leaves the organism.
 
 **Not wiring: `{{var}}`.** This is Postman-style *runtime* templating. `memory: { fill: … }` performs it at runtime, looking names up through the `recall` chain. Wiring connects cells; `{{var}}` fills user data.
 
@@ -257,6 +259,7 @@ The laws make self-growth safe. Every genome is checked at birth: the seed, anyt
 - `on:` listens only for events the callee can actually emit (a gene's `emits`, or a cell's `ends`, plus `mixed`/`none` for fan-out);
 - every `$ref` is bound: by an input, an `as`, a `for` variable, or `state`/`trail`;
 - `trigger` may spawn only declared cells, and `expose` only declared cells;
+- every filter used in wiring exists (an invented filter is rejected at birth, not at runtime);
 - a `skin` uses only known keys and widgets, and its fields are real inputs (`skinLaws()`);
 - every phenotype grows an existing cell.
 
@@ -343,6 +346,15 @@ flowchart LR
 5. **Birth the child** as a *trial* against a trial experience (a relative path resolves against the parent's experience folder). A trial lives in its own port namespace: its servers bind free ports, and its requests to `localhost:<declared port>` are routed to them, so a running parent is never touched. Its servers always close afterwards, even for `persist` phenotypes. (normally the `postman` phenotype on `collection.yaml`), with a slice of the parent's remaining budget. Its logs appear indented with `│`.
 6. If the child dies, its file is renamed to `*.stillborn.yaml`. If it survives, the result is `grown`.
 
+### The muse: choosing the next intent (DNA)
+
+`muse` is a sibling of `mind`, in every genome's DNA:
+1. It reads `self.genome` (including `genome.purpose` and `genome.history`), `self.physics`, the `archive` and `dna` memory, and the trial experience. Memory passes through `|redact|brief:3`, so secrets are stripped and only the latest entries are sent.
+2. It asks Claude for one next intent: `{ intent, why, evidence }`.
+3. With `grow: yes` (the `autopilot` phenotype, or the 🔮 Muse screen) it hands the intent to `mind`. Otherwise it only proposes.
+
+The kernel records every intent in the child's `genome.history`, via the `grow` gene's `reason` parameter, so the muse never repeats its lineage. Both Claude calls send `fallbacks: default` (server-side refusal fallback). A real refusal (category `cyber`) happened while raw HTTP history, with bearer tokens, was being sent. That's why `redact` exists.
+
 ### Adoption
 
 A grown child only takes over when you choose:
@@ -417,6 +429,9 @@ To prove the kernel isn't Postman in disguise, a second species was grown from `
 | `hub@0.3.0` | "Add automations that transform and forward webhooks" | 9 cells. Automations are **data** (`when` sense map + `send` template), rendered with `$req.…` and delivered with `signal`, then logged to `archive.deliveries`. First attempt, about 3 min. |
 | `hub@0.4.0` | "Give yourself a web UI" | 17 cells, `studio` phenotype on :4101: Inbox, Automations (add/replace at runtime, no LLM), Test webhook, Deliveries. Second attempt, about 8 min (streamed). |
 | `hub@0.4.1` | "Newest-first is wrong; use `\|reverse`" | Deleted its hand-made `flip` cells and used the kernel filter. 18 s. |
+| `hub@0.4.2` | "Add an Evolve screen" | Grown while a live hub held port 4100; the trial ran in its own port namespace (§11). From its own Evolve screen it then grew `0.4.3` in 8 s. |
+| `hub@0.5.0` | *Chosen by its own muse (autopilot):* "Add health monitoring for automations" | Monitor screen. The self-test passed, but a hands-on check found the per-automation counts silently at 0 (the kernel couldn't read variables in filter arguments yet: builder fix) and the rate shown as a bare `%` (DNA bug). |
+| `hub@0.5.1` | "Compute the rate with div/mul/round" | Fixed in 25 s. Adopted as `examples/hub/genome.yaml`. |
 
 **Builder gaps this second species exposed (all fixed in the builder, not the app):**
 - The egg had no worked examples of fan-out, and the primer never said `for` goes *inside* `do`. The primer is now explicit, and a new law rejects unknown state keys with a hint.
@@ -427,7 +442,6 @@ To prove the kernel isn't Postman in disguise, a second species was grown from `
 - The primer's filter list was hand-written and went stale (no `reverse`), so the mind wrote a buggy `flip` cell. The kernel now publishes its exact vocabulary in `self.physics` (genes, filters, state keys, skin keys, widgets), and the mind's prompt includes it.
 - Saving bones after every request made servers slow under load (p95 578 ms). Saves are now batched every 250 ms and settled on SIGINT/SIGTERM.
 
-| `hub@0.4.2` | "Add an Evolve screen" | Grown while a live hub held port 4100; the trial ran in its own port namespace (§11). Adopted as `examples/hub/genome.yaml`. From its own Evolve screen it then grew `0.4.3` in 8 s. |
 
 Run it: `npx tsx ribosome.ts examples/hub/genome.yaml examples/hub/experience.yaml --phenotype studio` (UI on :4101), or `serve` / `selftest`.
 

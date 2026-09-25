@@ -1,6 +1,6 @@
 {
   "name": "organism",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -14,7 +14,11 @@
     "hello": "tsx --env-file-if-exists=.env ribosome.ts examples/hello/genome.yaml examples/hello/experience.yaml",
     "hello:studio": "tsx --env-file-if-exists=.env ribosome.ts examples/hello/genome.yaml examples/hello/experience.yaml --phenotype studio",
     "hub:test": "tsx --env-file-if-exists=.env ribosome.ts examples/hub/genome.yaml examples/hub/experience.yaml --phenotype selftest",
-    "hub:studio": "tsx --env-file-if-exists=.env ribosome.ts examples/hub/genome.yaml examples/hub/experience.yaml --phenotype studio"
+    "hub:studio": "tsx --env-file-if-exists=.env ribosome.ts examples/hub/genome.yaml examples/hub/experience.yaml --phenotype studio",
+    "muse": "tsx --env-file-if-exists=.env ribosome.ts postman.genome.yaml collection.yaml --phenotype muse",
+    "autopilot": "tsx --env-file-if-exists=.env ribosome.ts postman.genome.yaml collection.yaml --phenotype autopilot",
+    "hub:muse": "tsx --env-file-if-exists=.env ribosome.ts examples/hub/genome.yaml examples/hub/experience.yaml --phenotype muse",
+    "hub:autopilot": "tsx --env-file-if-exists=.env ribosome.ts examples/hub/genome.yaml examples/hub/experience.yaml --phenotype autopilot"
   },
   "dependencies": {
     "tsx": "^4.19.0",

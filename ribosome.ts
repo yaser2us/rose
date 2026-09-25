@@ -60,12 +60,17 @@ const FILTERS: Record<string, (v: any, ...a: string[]) => any> = {
   first: (v) => (Array.isArray(v) ? v[0] : v),
   last: (v) => (Array.isArray(v) ? v[v.length - 1] : v),
   reverse: (v) => (Array.isArray(v) ? [...v].reverse() : v),
+  brief: (v, n) => brief(v, +n || 3),
+  redact: (v) => redact(v),
   sum: (v) => list(v).reduce((a: number, b: any) => a + (+b || 0), 0),
   add: (v, n) => (+v || 0) + +n,
+  mul: (v, n) => (+v || 0) * +n,
+  div: (v, n) => (+n ? (+v || 0) / +n : 0),
+  round: (v, d) => { const k = 10 ** (+d || 0); return Math.round((+v || 0) * k) / k; },
   map: (v, p) => list(v).map((i: any) => get(i, p)),
-  where: (v, p, x) => list(v).filter((i: any) => String(get(i, p)) === x),
-  all: (v, p, x) => Array.isArray(v) && v.length > 0 && v.every((i: any) => String(get(i, p)) === x),
-  eq: (v, x) => String(v) === x,
+  where: (v, p, x) => list(v).filter((i: any) => String(get(i, p)) === String(x)),
+  all: (v, p, x) => Array.isArray(v) && v.length > 0 && v.every((i: any) => String(get(i, p)) === String(x)),
+  eq: (v, x) => String(v) === String(x),
   pct: (v, n) => {
     const s = list(v).map(Number).sort((a, b) => a - b);
     return s[Math.min(s.length - 1, Math.floor((s.length * +n) / 100))];
@@ -74,6 +79,32 @@ const FILTERS: Record<string, (v: any, ...a: string[]) => any> = {
   green: (v) => c.g(String(v ?? "")), red: (v) => c.r(String(v ?? "")),
   dim: (v) => c.d(String(v ?? "")), yellow: (v) => c.y(String(v ?? "")),
 };
+/** What each filter means — published to the organism (self.physics) so it never guesses from a name. */
+const FILTER_DOCS: Record<string, string> = {
+  default: "default:x → the value, or x when it is missing", pad: "pad:n → text padded to n characters",
+  json: "json → JSON text", yaml: "yaml → YAML text", join: "join:sep → a list joined into text with sep",
+  len: "len → length of a list, text or map", keys: "keys → the keys of a map, as a list",
+  first: "first → first item of a list", last: "last → last item of a list", reverse: "reverse → the list, reversed",
+  brief: "brief:n → every list cut to its last n items, long text clipped", redact: "redact → secret-looking keys (headers, tokens, passwords…) and bearer values removed",
+  sum: "sum → total of a list of numbers", add: "add:n → number + n (n may be negative)", mul: "mul:n → number × n",
+  div: "div:n → number ÷ n (0 when n is 0)", round: "round:d → number rounded to d decimals",
+  map: "map:path → list of items → list of each item's path", where: "where:path:value → items whose path equals value",
+  all: "all:path:value → true when every item's path equals value", eq: "eq:value → true when equal to value",
+  pct: "pct:p → the p-th PERCENTILE of a list of numbers (NOT a percentage; use div and mul for rates)",
+  mark: "mark → ✔ for true, ✘ for false", green: "green → green terminal text", red: "red → red terminal text",
+  dim: "dim → dim terminal text", yellow: "yellow → yellow terminal text",
+};
+const SECRET = /header|au(?:th)|token|cookie|secret|password|passwd|pass$|api[-_]?key|^key$/i;
+function redact(v: any): any {
+  if (Array.isArray(v)) return v.map(redact);
+  if (isMap(v)) return Object.fromEntries(Object.entries(v).filter(([k]) => !SECRET.test(k)).map(([k, x]) => [k, redact(x)]));
+  return typeof v === "string" ? v.replace(/(Bearer|Basic)\s+\S+/gi, "$1 [redacted]") : v;
+}
+function brief(v: any, n: number): any {
+  if (Array.isArray(v)) return v.slice(-n).map((x) => brief(x, n));
+  if (isMap(v)) return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, brief(x, n)]));
+  return typeof v === "string" && v.length > 400 ? v.slice(0, 400) + "…" : v;
+}
 const WHOLE = /^\$([A-Za-z_][\w.]*)((?:\|[^|]*)*)$/;
 const PIECE = /\$?\$\{([^}]*)\}/g;
 
@@ -83,7 +114,8 @@ function pipe(expr: string, scope: any) {
     const [name, ...args] = f.split(":");
     const fn = FILTERS[name.trim()];
     if (!fn) throw new Error(`unknown filter '${name}'`);
-    return fn(v, ...args);
+    // an argument starting with $ is read from scope: where:automation:$item.name
+    return fn(v, ...args.map((x) => (x.startsWith("$$") ? x.slice(1) : x.startsWith("$") ? get(scope, x.slice(1)) : x)));
   }, get(scope, p.trim()));
 }
 
@@ -104,13 +136,21 @@ function evaluate(x: any, scope: any): any {
 }
 
 /** Every scope name an expression reads (used by the laws to reject unbound wiring). */
-function refs(x: any, out = new Set<string>()): Set<string> {
-  const root = (e: string) => e.split("|")[0].trim().split(".")[0];
+function refs(x: any, out = new Set<string>(), filters?: Set<string>): Set<string> {
+  const root = (e: string) => {
+    const [p, ...fs] = e.split("|");
+    for (const f of fs) {
+      const [name, ...args] = f.split(":");
+      filters?.add(name.trim());
+      for (const a of args) if (a.startsWith("$") && !a.startsWith("$$")) out.add(a.slice(1).split(".")[0]);
+    }
+    return p.trim().split(".")[0];
+  };
   if (typeof x === "string" && !x.startsWith("$$")) {
     if (WHOLE.test(x)) out.add(root(x.slice(1)));
     else for (const m of x.matchAll(PIECE)) if (!m[0].startsWith("$$")) out.add(root(m[1]));
-  } else if (Array.isArray(x)) x.forEach((v) => refs(v, out));
-  else if (isMap(x)) Object.values(x).forEach((v) => refs(v, out));
+  } else if (Array.isArray(x)) x.forEach((v) => refs(v, out, filters));
+  else if (isMap(x)) Object.values(x).forEach((v) => refs(v, out, filters));
   return out;
 }
 
@@ -146,7 +186,7 @@ const CHEMISTRY: Record<string, { params: string[]; emits: string[] }> = {
   sense:     { params: ["subject", "target", "expect"], emits: ["pass", "fail"] },
   transform: { params: ["input", "get", "pick", "merge", "find", "where", "render", "with", "value", "shape", "prefix", "stable", "parse"], emits: ["done", "none"] },
   trigger:   { params: ["on", "port", "cell", "with", "expose", "title"], emits: ["listening", "failed"] },
-  grow:      { params: ["genome", "delta", "phenotype", "experience", "with"], emits: ["grown", "stillborn"] },
+  grow:      { params: ["genome", "delta", "phenotype", "experience", "with", "reason"], emits: ["grown", "stillborn"] },
 };
 type Reaction = { event: string; output?: any };
 
@@ -323,6 +363,9 @@ function laws(g: any): string[] {
       for (const r of refs(st.do)) need(local.has(r), `${at(s)} reads '$${r}', which is never bound`);
     }
     for (const r of refs(d.output)) need(bound.has(r), `${at()} output reads '$${r}', which is never bound`);
+    const used = new Set<string>();
+    refs([d.lifecycle, d.output, d.skin?.summary], new Set(), used);
+    for (const f of used) need(FILTERS[f], `${at()} uses unknown filter '${f}' (known: ${Object.keys(FILTERS).join(", ")})`);
     if (d.skin !== undefined) e.push(...skinLaws(d.skin, d.input ?? []).map((m) => `${at()} skin: ${m}`));
   }
 
@@ -523,6 +566,7 @@ class Organism {
     let child = structuredClone(isMap(a.genome) ? a.genome : this.genome);
     if (isMap(a.delta)) child = splice(child, a.delta);
     child.genome = { ...(child.genome ?? {}), name: child.genome?.name ?? me.name, parent: `${me.name}@${me.version}` };
+    const history = [...(Array.isArray(me.history) ? me.history : [])];   // every genome carries the intents that made it
     if (!newer(child.genome.version, me.version)) {
       const [x, y] = String(me.version).split(".").map(Number);
       child.genome.version = `${x}.${(y || 0) + 1}.0`;
@@ -543,6 +587,7 @@ class Organism {
       const [x, y] = String(child.genome.version).split(".").map(Number);
       child.genome.version = `${x}.${(y || 0) + 1}.0`;
     }
+    child.genome.history = [...history, { version: child.genome.version, ...(a.reason ? { reason: a.reason } : {}) }];
     const file = path.join(dir, `${child.genome.name}-${child.genome.version}.yaml`);
     fs.writeFileSync(file, `# grown by ${me.name}@${me.version} — reversible: delete this file to undo\n` + dnaText(child));
     this.say(c.d(`  🥚 ${child.genome.name}@${child.genome.version} laid at ${file}`));
@@ -748,7 +793,7 @@ async function birth(genome: any, o: BirthOpts) {
   const bones: Record<string, string> = genome.body?.bones ?? {};
   const seed: Record<string, any> = {
     self: { genome: dnaText(genome), name: genome.genome.name, version: v,   // the organism may read its DNA and its physics
-            physics: { genes: CHEMISTRY, filters: Object.keys(FILTERS), state_keys: ["do", "as", "to", "on"],
+            physics: { genes: CHEMISTRY, filters: { ...FILTER_DOCS, "(note)": "any filter argument starting with $ is read from scope, e.g. where:automation:$item.name" }, state_keys: ["do", "as", "to", "on"],
                        skin: { keys: SKIN_KEYS, field_keys: FIELD_KEYS, widgets: WIDGETS, show_as: SHOW_AS } } },
     world: Object.fromEntries((genome.action?.world ?? []).map((k: string) => [k, process.env[k]]).filter(([, x]: any) => x !== undefined)),
   };

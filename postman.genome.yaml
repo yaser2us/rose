@@ -1,12 +1,20 @@
 # 🧬 seed genome — adopted from .organism/genomes/postman-0.5.0.yaml (lineage: postman@0.4.0)
-genome: { name: postman, version: 0.5.0, parent: postman@0.4.0 }
+genome:
+  name: postman
+  version: 0.5.0
+  parent: postman@0.4.0
+  purpose: "A Postman-class API client developers use every day: build, send, save and organise requests; run and automate collections; inspect responses and history. Everything grown from DNA."
+  history:
+    - { version: 0.3.0, reason: "hand-written seed: requests, auth, runner, mocks, learned assertions" }
+    - { version: 0.4.0, reason: "Add a history feature: record every request and response exchange of each run into the archive" }
+    - { version: 0.5.0, reason: "Grow a Postman-like studio UI: Request, Collection Runner, History, Environment and Evolve screens" }
 genes:
   signal: { params: [ method, url, headers, body, log ], emits: [ received, failed, sent ] }
   memory: { params: [ write, value, scope, write_all, read, fill, append, keep ], emits: [ written, read, missing ] }
   sense: { params: [ subject, target, expect ], emits: [ pass, fail ] }
   transform: { params: [ input, get, pick, merge, find, where, render, with, value, shape, prefix, stable, parse ], emits: [ done, none ] }
   trigger: { params: [ on, port, cell, with, expose, title ], emits: [ listening, failed ] }
-  grow: { params: [ genome, delta, phenotype, experience, with ], emits: [ grown, stillborn ] }
+  grow: { params: [ genome, delta, phenotype, experience, with, reason ], emits: [ grown, stillborn ] }
 body:
   recall: [ run, collection, env, global ]
   bones:
@@ -185,10 +193,12 @@ cells:
             headers:
               x-api-key: "$key|default:"
               anthropic-version: 2023-06-01
+              anthropic-beta: server-side-fallback-2026-07-01
             body:
               model: $model
               max_tokens: 64000
               stream: true
+              fallbacks: default
               system: |
                 You are the mind of a software organism. You grow new features by writing DNA.
                 The runtime (the ribosome) interprets a YAML genome; it has no feature code of
@@ -269,7 +279,7 @@ cells:
       unstreamed: { do: { transform: { find: $reply.body.content, where: { type: text } } }, as: block, on: { done: unwrapping, none: puzzled } }
       unwrapping: { do: { transform: { value: $block.text } }, as: said, on: { done: reading, none: puzzled } }
       reading: { do: { transform: { parse: $said } }, as: delta, on: { done: growing, none: puzzled } }
-      growing: { do: { grow: { delta: $delta, phenotype: $phenotype, experience: $trial } }, as: child, on: { grown: celebrating, stillborn: mourning } }
+      growing: { do: { grow: { delta: $delta, phenotype: $phenotype, experience: $trial, reason: $intent } }, as: child, on: { grown: celebrating, stillborn: mourning } }
       celebrating: { do: { signal: { log: "  🌳 evolved → ${child.version|yellow} ${child.file|dim}" } }, to: evolved }
       mourning: { do: { signal: { log: "  💀 stillborn: ${child.errors|join:; |red}" } }, to: weighing }
       weighing: { do: { sense: { subject: $attempt|default:0, expect: <2 } }, on: { pass: retrying, fail: extinct } }
@@ -483,7 +493,7 @@ cells:
           as: json
   studio:
     genes: [ trigger, signal ]
-    cells: [ environment, mock, auth, ad_hoc, collection_runner, history_view, environment_view, evolver ]
+    cells: [ environment, mock, auth, ad_hoc, collection_runner, history_view, environment_view, evolver , muse ]
     input: [ experience, model, api, trial, phenotype ]
     lifecycle:
       seeding: { do: { environment: { vars: $experience.variables } }, to: mocking }
@@ -495,7 +505,7 @@ cells:
             on: ui
             port: 4000
             title: Postman
-            expose: [ ad_hoc, collection_runner, history_view, environment_view, evolver ]
+            expose: [ ad_hoc, collection_runner, history_view, environment_view, evolver , muse ]
             with:
               experience: $experience
               model: $model
@@ -508,6 +518,74 @@ cells:
       announcing: { do: { signal: { log: "  🛰  studio: Postman open on http://localhost:4000 (Ctrl+C to stop)" } }, to: open }
     ends: [ open, blocked ]
     fatal: [ blocked ]
+  muse:
+    genes: [ signal, memory, transform, sense ]
+    cells: [ mind ]
+    input: [ model, api, trial, phenotype, experience, grow ]
+    lifecycle:
+      recalling: { do: { memory: { read: genome, scope: self } }, as: dna, to: sensing }
+      sensing: { do: { memory: { read: physics, scope: self } }, as: physics, to: remembering }
+      remembering: { do: { memory: { read: "", scope: archive } }, as: archive, to: learning }
+      learning: { do: { memory: { read: "", scope: dna } }, as: learned, to: keying }
+      keying: { do: { memory: { read: ANTHROPIC_API_KEY, scope: world } }, as: key, on: { read: announcing, missing: keying_alt } }
+      keying_alt: { do: { memory: { read: CLAUDE_API_KEY, scope: world } }, as: key, to: announcing }
+      announcing: { do: { signal: { log: "  🔮 muse: reading my purpose, lineage, memory and DNA…" } }, to: asking }
+      asking:
+        do:
+          signal:
+            method: POST
+            url: $api
+            headers: { x-api-key: "$key|default:", anthropic-version: "2023-06-01", anthropic-beta: server-side-fallback-2026-07-01 }
+            body:
+              model: $model
+              max_tokens: 32000
+              stream: true
+              fallbacks: default
+              system: |
+                You are the muse of a software organism. The organism grows itself: its mind
+                turns an intent (plain English) into a DNA change, the laws check it, and a
+                trial proves it. Your only job is to choose the NEXT intent.
+
+                Choose the single most valuable next step toward the organism's purpose
+                (genome.purpose), judged from evidence: what it has experienced (memory),
+                what failed or looks weak, what its DNA lacks for its purpose, and what its
+                lineage already did (genome.history — never repeat or undo a past intent).
+                Prefer one small, testable step the kernel vocabulary can express. Tell the
+                mind what must not change (always: do not modify the mind or muse cells).
+                If the organism has a selftest phenotype, the step must keep it passing and
+                extend it to cover the new behaviour.
+
+                OUTPUT: a single ```yaml fenced block and nothing else, with exactly:
+                  intent: <the instruction to the mind, specific enough to implement>
+                  why: <one or two sentences>
+                  evidence: [ <short facts from the input that you relied on> ]
+              messages:
+                - role: user
+                  content: "WHAT I REMEMBER (latest entries of each list):\n${archive|redact|brief:3|yaml}\n\nWHAT I HAVE LEARNED:\n${learned|redact|brief:3|yaml}\n\nTHE EXPERIENCE MY TRIALS USE (phenotype ${phenotype}, file ${trial}):\n${experience|redact|brief:5|yaml}\n\nTHE KERNEL'S EXACT VOCABULARY:\n${physics|yaml}\n\nMY GENOME (see genome.purpose and genome.history):\n${dna}"
+        as: reply
+        on: { received: locating, failed: puzzled }
+      locating: { do: { sense: { subject: $reply.body, expect: "type:array" } }, on: { pass: streamed, fail: unstreamed } }
+      streamed: { do: { transform: { value: "$reply.body|where:data.delta.type:text_delta|map:data.delta.text|join:" } }, as: said, on: { done: reading, none: puzzled } }
+      unstreamed: { do: { transform: { find: $reply.body.content, where: { type: text } } }, as: block, on: { done: unwrapping, none: puzzled } }
+      unwrapping: { do: { transform: { value: $block.text } }, as: said, on: { done: reading, none: puzzled } }
+      reading: { do: { transform: { parse: $said } }, as: proposal, on: { done: checking, none: puzzled } }
+      checking: { do: { sense: { subject: $proposal.intent, expect: "type:string" } }, on: { pass: telling, fail: puzzled } }
+      telling: { do: { signal: { log: "  💡 next intent: ${proposal.intent}\n     why: ${proposal.why}\n     evidence: ${proposal.evidence|join: · }" } }, to: deciding }
+      deciding: { do: { sense: { subject: "$grow|default:no", expect: "yes" } }, on: { pass: growing, fail: proposed } }
+      growing: { do: { mind: { intent: $proposal.intent, model: $model, api: $api, trial: $trial, phenotype: $phenotype, experience: $experience } }, as: child, on: { evolved: grown, "*": failed } }
+      puzzled: { do: { signal: { log: "  ✘ muse got no usable proposal: ${reply.status}${reply.error} ${reply.body|where:event:error|map:data.error.message|join: } stop=${reply.body|where:event:message_delta|map:data.delta.stop_reason|join:} ${reply.body|where:event:message_delta|map:data.delta.stop_details|json} ${proposal.error}" } }, to: confused }
+    ends: [ proposed, grown, failed, confused ]
+    fatal: [ failed, confused ]
+    output: { intent: $proposal.intent, why: $proposal.why, evidence: $proposal.evidence, child: $child }
+    skin:
+      title: Muse
+      icon: 🔮
+      about: The organism reads its purpose, lineage and memory, and proposes what to grow next. Choose grow = yes to let it grow the proposal too.
+      action: Suggest next step
+      fields: { grow: { widget: choose, options: [ "no", "yes" ], default: "no" } }
+      summary: "${intent}"
+      show:
+        - { label: Proposal, path: "", as: auto }
 phenotypes:
   postman: { grow: postman, with: { parallel: 1 } }
   load_tester: { grow: postman, with: { parallel: 50 } }
@@ -515,4 +593,6 @@ phenotypes:
   evolve: { grow: mind, with: { intent: (pass --with intent=...), model: claude-opus-5, api: https://api.anthropic.com/v1/messages, trial: collection.yaml, phenotype: postman } }
   rehearse: { grow: rehearsal, with: { intent: record every request and response in a history, model: claude-opus-5, trial: collection.yaml, phenotype: postman } }
   studio: { grow: studio, persist: true, with: { model: claude-opus-5, api: https://api.anthropic.com/v1/messages, trial: collection.yaml, phenotype: postman } }
+  muse: { grow: muse, with: { model: claude-opus-5, api: "https://api.anthropic.com/v1/messages", trial: collection.yaml, phenotype: postman } }
+  autopilot: { grow: muse, with: { model: claude-opus-5, api: "https://api.anthropic.com/v1/messages", trial: collection.yaml, phenotype: postman, grow: "yes" } }
 active_phenotype: postman
