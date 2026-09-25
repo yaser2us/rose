@@ -1,0 +1,63 @@
+# 👋 hello — the smallest useful organism, written by hand (no LLM). Read it top to bottom.
+#
+#   npx tsx ribosome.ts examples/hello/genome.yaml examples/hello/experience.yaml                      # CLI
+#   npx tsx ribosome.ts examples/hello/genome.yaml examples/hello/experience.yaml --phenotype studio   # UI on :4300
+genome: { name: hello, version: 1.0.0 }
+
+# Which physics this organism uses. `{}` means "the kernel's defaults".
+genes:
+  signal: {}      # talk to the outside world (HTTP or a log line)
+  memory: {}      # remember things
+  trigger: {}     # listen (servers, the UI)
+
+# `archive` is a memory scope that survives between runs (.organism/hello-demo.lock.json).
+body:
+  bones: { archive: kept }
+
+cells:
+  # One feature = one cell: a small state machine. Each state does ONE thing,
+  # binds the result with `as`, and moves on with `to` (or `on: {event: next}`).
+  greet:
+    genes: [memory, signal]
+    input: [name]
+    lifecycle:
+      counting: { do: { memory: { append: visitors, value: "$name|default:world", scope: archive, keep: 100 } }, as: visitors, to: greeting }
+      greeting: { do: { signal: { log: "  👋 hello, ${name|default:world}! (visitor #${visitors|len})" } }, to: greeted }
+    ends: [greeted]
+    output: { message: "hello, ${name|default:world}!", visitor: "$visitors|len", recent: "$visitors|reverse" }
+    # Optional: how this cell looks as a screen when a root exposes it in the UI.
+    skin:
+      title: Greet
+      icon: 👋
+      about: Type a name; the organism greets it and remembers every visitor.
+      action: Say hello
+      fields: { name: { placeholder: world } }
+      summary: "${message} · visitor #${visitor}"
+      show:
+        - { label: Recent visitors, path: recent, as: json }
+
+  # A root for the command line: greet everyone listed in the experience.
+  hello:
+    cells: [greet]
+    input: [experience]
+    lifecycle:
+      greeting: { do: { greet: { name: $who }, for: { who: $experience.names } }, to: done }
+    ends: [done]
+
+  # A root for the browser: expose `greet` as a screen.
+  studio:
+    genes: [trigger, signal]
+    cells: [greet]
+    input: [experience]
+    lifecycle:
+      opening:    { do: { trigger: { on: ui, port: "$experience.port|default:4300", title: Hello, expose: [greet] } }, on: { listening: announcing, failed: blocked } }
+      announcing: { do: { signal: { log: "  🖥  open http://localhost:${experience.port|default:4300}" } }, to: open }
+      blocked:    { do: { signal: { log: "  ✘ port ${experience.port|default:4300} is taken" } }, to: dead }
+    ends: [open, dead]
+    fatal: [dead]
+
+# A phenotype picks the root cell to grow. Same DNA, different body.
+phenotypes:
+  hello:  { grow: hello }
+  studio: { grow: studio, persist: true }
+active_phenotype: hello

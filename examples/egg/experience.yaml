@@ -1,0 +1,6 @@
+# What your grown app is tested against. Put anything here your app needs to prove itself:
+# ports, sample inputs, expected outputs. The mind sees this file, and every child must
+# pass its `selftest` phenotype against it before it counts as grown.
+name: my-app
+port: 4500
+samples: []

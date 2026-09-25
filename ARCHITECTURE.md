@@ -340,7 +340,7 @@ flowchart LR
 2. **Version:** use the delta's version if it's newer, otherwise bump the minor version. Never reuse a file that already exists. Record `parent: name@version`.
 3. **Laws + guardrails.** Any violation means `stillborn` with the errors. The rejected DNA is saved as `*.rejected.yaml` with the errors in its header, so failures can be read rather than guessed.
 4. **Save** to `.organism/genomes/<name>-<version>.yaml`, using the compact serializer `dnaText()`.
-5. **Birth the child** as a *trial* (its servers always close afterwards, even for `persist` phenotypes) against a trial experience (normally the `postman` phenotype on `collection.yaml`), with a slice of the parent's remaining budget. Its logs appear indented with `│`.
+5. **Birth the child** as a *trial* against a trial experience (a relative path resolves against the parent's experience folder). A trial lives in its own port namespace: its servers bind free ports, and its requests to `localhost:<declared port>` are routed to them, so a running parent is never touched. Its servers always close afterwards, even for `persist` phenotypes. (normally the `postman` phenotype on `collection.yaml`), with a slice of the parent's remaining budget. Its logs appear indented with `│`.
 6. If the child dies, its file is renamed to `*.stillborn.yaml`. If it survives, the result is `grown`.
 
 ### Adoption
@@ -408,7 +408,7 @@ Real runs so far:
 
 ## 13. A second species: the hub (Zapier-lite)
 
-To prove the kernel isn't Postman in disguise, a second species was grown from `hub.genome.yaml`, an **egg** holding only the six genes and the `mind` cell. The experience is `hub.yaml` (port 4100, sample webhooks, starting automations). Every generation had to ship a `selftest` phenotype that proves itself.
+To prove the kernel isn't Postman in disguise, a second species was grown from `examples/egg/genome.yaml`, an **egg** holding only the six genes and the `mind` cell. The experience is `examples/hub/experience.yaml` (port 4100, sample webhooks, starting automations). Every generation had to ship a `selftest` phenotype that proves itself.
 
 | Generation | Intent | Result |
 |---|---|---|
@@ -427,7 +427,9 @@ To prove the kernel isn't Postman in disguise, a second species was grown from `
 - The primer's filter list was hand-written and went stale (no `reverse`), so the mind wrote a buggy `flip` cell. The kernel now publishes its exact vocabulary in `self.physics` (genes, filters, state keys, skin keys, widgets), and the mind's prompt includes it.
 - Saving bones after every request made servers slow under load (p95 578 ms). Saves are now batched every 250 ms and settled on SIGINT/SIGTERM.
 
-Run it: `npx tsx ribosome.ts .organism/genomes/hub-0.3.0.yaml hub.yaml --phenotype serve` (or `selftest`).
+| `hub@0.4.2` | "Add an Evolve screen" | Grown while a live hub held port 4100; the trial ran in its own port namespace (§11). Adopted as `examples/hub/genome.yaml`. From its own Evolve screen it then grew `0.4.3` in 8 s. |
+
+Run it: `npx tsx ribosome.ts examples/hub/genome.yaml examples/hub/experience.yaml --phenotype studio` (UI on :4101), or `serve` / `selftest`.
 
 ## 14. The current seed, cell by cell
 
@@ -479,8 +481,11 @@ ribosome.ts                 kernel
 postman.genome.yaml         seed genome (currently postman@0.5.0, adopted)
 collection.yaml             main experience (self-contained mock world, offline)
 rehearsal.yaml              experience where a mock plays the LLM
-hub.genome.yaml             the egg for the second species (genes + mind only)
-hub.yaml                    experience for the hub: port 4100, sample webhooks, automations
+README.md                   quick start
+examples/
+  hello/                      hand-written starter (no LLM): genome + experience
+  egg/                        genes + mind only; grow any app from intents
+  hub/                        Zapier-like webhook hub grown from the egg (adopted hub@0.4.2)
 .env                        CLAUDE_API_KEY (gitignored; loaded by npm scripts via --env-file-if-exists)
 .organism/                  gitignored, generated
   <experience>.lock.json      { born_from, version, lineage, bones: { dna, archive } }
@@ -494,7 +499,6 @@ ARCHITECTURE.md             this document
 ## 17. Limits and next steps
 
 - **Fitness is only "born and didn't die".** Nothing yet scores whether a child is better than its parent.
-- **Trials share ports with running apps.** A child's self-test needs the same ports as a running studio, so Evolve can't be offered inside a running hub, and trials here used a copy of the experience on port 4200. Isolated trial ports would fix this.
 - **No hot-swap.** Evolve grows a child file, but the running studio keeps its own genome until it's restarted, or until you `--adopt`.
 - **Port collisions are easy to miss.** If :4000 is taken, the studio ends in its fatal `blocked` state (exit code 1), but it prints no message, and whatever already holds the port keeps answering. The `blocked` path should log a clear line.
 - **Growing the kernel's vocabulary** (filters, transform operations, widgets) is the main risk to keeping it generic. Add one only when no combination of existing ones can do the job.

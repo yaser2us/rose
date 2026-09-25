@@ -1,0 +1,431 @@
+# 🧬 hub: a Zapier-like webhook hub, grown by the mind from examples/egg — adopted from hub-0.4.2 (lineage: hub@0.4.1)
+genome: { name: hub, version: 0.4.2, parent: hub@0.4.1 }
+genes:
+  signal: { params: [ method, url, headers, body, log ], emits: [ received, failed, sent ] }
+  memory: { params: [ write, value, scope, write_all, read, fill, append, keep ], emits: [ written, read, missing ] }
+  sense: { params: [ subject, target, expect ], emits: [ pass, fail ] }
+  transform: { params: [ input, get, pick, merge, find, where, render, with, value, shape, prefix, stable, parse ], emits: [ done, none ] }
+  trigger: { params: [ on, port, cell, with, expose, title ], emits: [ listening, failed ] }
+  grow: { params: [ genome, delta, phenotype, experience, with ], emits: [ grown, stillborn ] }
+body:
+  recall: [ run, collection, env, global ]
+  bones:
+    dna: heritable
+    archive: kept
+action:
+  budget:
+    max_requests: 500
+  world: [ ANTHROPIC_API_KEY, CLAUDE_API_KEY ]
+cells:
+  mind:
+    genes: [ signal, memory, transform, sense, grow ]
+    cells: [ mind ]
+    input: [ intent, model, api, trial, phenotype, attempt, feedback, experience ]
+    lifecycle:
+      recalling: { do: { memory: { read: genome, scope: self } }, as: dna, to: sensing }
+      sensing: { do: { memory: { read: physics, scope: self } }, as: physics, to: keying }
+      keying: { do: { memory: { read: ANTHROPIC_API_KEY, scope: world } }, as: key, on: { read: announcing, missing: keying_alt } }
+      keying_alt: { do: { memory: { read: CLAUDE_API_KEY, scope: world } }, as: key, to: announcing }
+      announcing: { do: { signal: { log: '  💭 mind: "${intent}" (attempt ${attempt|default:0|add:1})' } }, to: asking }
+      asking:
+        do:
+          signal:
+            method: POST
+            url: $api
+            headers:
+              x-api-key: "$key|default:"
+              anthropic-version: 2023-06-01
+            body:
+              model: $model
+              max_tokens: 64000
+              stream: true
+              system: |
+                You are the mind of a software organism. You grow new features by writing DNA.
+                The runtime (the ribosome) interprets a YAML genome; it has no feature code of
+                its own. Your only lever is a genome DELTA.
+
+                OUTPUT: a single ```yaml fenced block containing a DELTA and nothing else.
+                A delta has the same top-level sections as the genome (genome, genes, body,
+                action, cells, phenotypes). Each entry you give REPLACES the entry of the same
+                name (a whole cell at a time); `null` deletes it; entries you omit are kept.
+                Always include `genome: { version: <higher than current> }`.
+
+                LANGUAGE (read the current genome for many worked examples):
+                - A cell has `genes` (subset of the six genes), `cells` (other cells it may
+                  call), `input` (names it accepts), `lifecycle` (ordered states; the first is
+                  the entry), `ends` (terminal states), optional `fatal`, optional `output`.
+                - A state: `do: { <gene-or-cell>: <args> }`, optional `as: name` binding the
+                  result, then EITHER `to: next` OR `on: { <event>: next, "*": next }`.
+                  A gene's events are its `emits`. A cell's events are its `ends`.
+                  Fan-out goes INSIDE `do`, next to the call:
+                    `do: { some_cell: { x: $item }, for: { item: $list } }` (sequential) or
+                    `do: { some_cell: {...}, times: N }` (parallel). The `for` variable is
+                  bound only inside that `do`. The result is a list; the event is the shared
+                  event of all calls, or `mixed` / `none` (empty list).
+                  A state has ONLY these keys: do, as, to, on.
+                - Wiring: a string that is exactly `$name.path` is the raw value; `$${name.path}`
+                  inside text interpolates. Filters: default pad json yaml join len keys first
+                  last sum add map where all eq pct mark green red dim yellow (e.g.
+                  `$${list|len}`, `"$x|default:0"`). Every `$name` must be an input, an `as`
+                  binding, a `for` variable, or `state`/`trail`.
+                - Gene args must be among the gene's declared params. Cell args must be among
+                  the callee's `input`.
+                - A phenotype `{ grow: root_cell, with: {...}, persist }` runs `root_cell` with
+                  its `with` values PLUS `experience` (the parsed experience file) as input.
+                  Read test data and ports from `$experience`; never invent them.
+                - Memory scopes: recall chain + bones. `dna` is heritable, `archive` is kept.
+                  `memory: { read: "", scope: env }` reads a whole scope.
+                - Servers: `trigger: { on: http, port, cell, with }` grows `cell` per request
+                  (input `request`, output `{status, body}`). Emits `listening` or `failed`
+                  (port taken). A phenotype with `persist: true` keeps its servers alive.
+                - SKIN (the UI is DNA too): `trigger: { on: ui, port, title, expose: [cells], with: {...} }`
+                  serves a web app. Each exposed cell becomes a screen: a form built from its
+                  inputs, a button that runs it (UI values + `with` become its input), and a
+                  panel showing its output. Memory persists across clicks. Shape a screen with
+                  an optional `skin` on the cell:
+                    title, icon (one emoji), about (one sentence), action (button label),
+                    auto (true = run when opened), summary ("$${a} · $${b|len}" over the output),
+                    badge (output path shown as the status pill), good (badge values shown green),
+                    fields: { <input>: text|textarea|json|number  or  { widget, options (for
+                      widget: choose), default, placeholder, label, span: 1-12 grid columns } }
+                      Only listed fields are shown; omit `fields` to show every input.
+                    show: [ { label, path (into the output), as: auto|json|table|text,
+                      columns: { <Header>: <path in each row> } } ]  (rendered as tabs)
+                  Log lines a click produces appear in a Console tab.
+                The runtime rejects any delta that breaks these laws, and tells you why.
+              messages:
+                - role: user
+                  content: |-
+                    INTENT:
+                    ${intent}
+
+                    FEEDBACK FROM YOUR LAST ATTEMPT:
+                    ${feedback|default:none}
+
+                    THE EXPERIENCE YOUR CHILD IS TESTED WITH (phenotype ${phenotype}, file ${trial}):
+                    ${experience|yaml}
+
+                    THE KERNEL'S EXACT VOCABULARY (use nothing else; e.g. the |reverse filter reverses a list):
+                    ${physics|yaml}
+
+                    YOUR CURRENT GENOME:
+                    ${dna}
+        as: reply
+        on:
+          received: locating
+          failed: puzzled
+      locating: { do: { sense: { subject: $reply.body, expect: type:array } }, on: { pass: streamed, fail: unstreamed } }
+      streamed: { do: { transform: { value: "$reply.body|where:data.delta.type:text_delta|map:data.delta.text|join:" } }, as: said, on: { done: reading, none: puzzled } }
+      unstreamed: { do: { transform: { find: $reply.body.content, where: { type: text } } }, as: block, on: { done: unwrapping, none: puzzled } }
+      unwrapping: { do: { transform: { value: $block.text } }, as: said, on: { done: reading, none: puzzled } }
+      reading: { do: { transform: { parse: $said } }, as: delta, on: { done: growing, none: puzzled } }
+      growing: { do: { grow: { delta: $delta, phenotype: $phenotype, experience: $trial } }, as: child, on: { grown: celebrating, stillborn: mourning } }
+      celebrating: { do: { signal: { log: "  🌳 evolved → ${child.version|yellow} ${child.file|dim}" } }, to: evolved }
+      mourning: { do: { signal: { log: "  💀 stillborn: ${child.errors|join:; |red}" } }, to: weighing }
+      weighing: { do: { sense: { subject: $attempt|default:0, expect: <2 } }, on: { pass: retrying, fail: extinct } }
+      retrying:
+        do:
+          mind:
+            intent: $intent
+            model: $model
+            api: $api
+            trial: $trial
+            phenotype: $phenotype
+            attempt: $attempt|default:0|add:1
+            feedback: "$child.errors|join:; "
+            experience: $experience
+        as: child
+        on:
+          evolved: evolved
+          "*": extinct
+      puzzled:
+        do:
+          signal:
+            log: "  ✘ mind got no usable DNA: ${reply.status}${reply.error} ${reply.body.error.message}${reply.body|where:event:error|map:data.error.message|join: } stop=${reply.body|where:event:message_delta|map:data.delta.stop_reason|join:} ${delta.error}"
+        to: confused
+    ends: [ evolved, extinct, confused ]
+    fatal: [ extinct, confused ]
+    output: $child
+  inbox_catch:
+    genes: [ memory, transform, sense ]
+    cells: [ automate ]
+    input: [ request ]
+    lifecycle:
+      recording: { do: { memory: { append: inbox, scope: archive, keep: 200, value: { method: $request.method, path: $request.path, headers: $request.headers, body: $request.body } } }, to: sniffing }
+      sniffing: { do: { sense: { subject: $request.path, expect: ^/sink/ } }, on: { pass: counting, fail: globbing } }
+      globbing: { do: { sense: { subject: $request.path, expect: /sink/* } }, on: { pass: counting, fail: loading } }
+      loading: { do: { memory: { read: automations, scope: archive } }, as: automations, on: { read: firing, missing: counting } }
+      firing: { do: { automate: { automation: $item, request: $request }, for: { item: $automations } }, as: fired, on: { "*": counting } }
+      counting: { do: { memory: { read: inbox, scope: archive } }, as: inbox, on: { read: replying, missing: emptying } }
+      emptying: { do: { transform: { value: [] } }, as: inbox, to: replying }
+      replying: { do: { transform: { value: { status: 200, body: { received: true, count: $inbox|len } } } }, as: reply, to: caught }
+    ends: [ caught ]
+    output: $reply
+  hub:
+    genes: [ trigger, memory, transform ]
+    cells: [ inbox_catch ]
+    input: [ port, automations ]
+    lifecycle:
+      seeding: { do: { memory: { read: automations, scope: archive } }, as: known, on: { read: listening, missing: checking } }
+      checking: { do: { transform: { value: $automations } }, as: seed, on: { done: planting, none: listening } }
+      planting: { do: { memory: { write: automations, scope: archive, value: $seed } }, to: listening }
+      listening: { do: { trigger: { on: http, port: $port, cell: inbox_catch } }, on: { listening: open, failed: blocked } }
+    ends: [ open, blocked ]
+  probe:
+    genes: [ signal, sense ]
+    input: [ sample, port ]
+    lifecycle:
+      sending: { do: { signal: { method: POST, url: "http://localhost:${port}${sample.path}", body: $sample.body } }, as: reply, on: { received: checking, sent: checking, failed: erroring } }
+      checking: { do: { sense: { subject: $reply.status, expect: 200 } }, on: { pass: cheering, fail: booing } }
+      cheering: { do: { signal: { log: "  ✔ ${sample.path} → ${reply.status|green}" } }, to: pass }
+      booing: { do: { signal: { log: "  ✘ ${sample.path} → ${reply.status|red} (expected 200)" } }, to: fail }
+      erroring: { do: { signal: { log: "  ✘ ${sample.path} → no reply ${reply.error|red}" } }, to: fail }
+    ends: [ pass, fail ]
+    output: $reply
+  serve_root:
+    genes: [ signal ]
+    cells: [ hub ]
+    input: [ experience ]
+    lifecycle:
+      opening: { do: { hub: { port: $experience.port, automations: $experience.automations } }, on: { open: announcing, blocked: failing } }
+      announcing: { do: { signal: { log: "  🪝 webhook inspector listening at http://localhost:${experience.port}/ (any method, any path)" } }, to: serving }
+      failing: { do: { signal: { log: "  ✘ port ${experience.port|red} is busy" } }, to: dead }
+    ends: [ serving, dead ]
+    fatal: [ dead ]
+  selftest_root:
+    genes: [ signal, memory, sense, transform ]
+    cells: [ hub, probe, check_delivery, check_route ]
+    input: [ experience ]
+    lifecycle:
+      clearing: { do: { memory: { write: deliveries, scope: archive, value: [] } }, to: opening }
+      opening: { do: { hub: { port: $experience.port, automations: $experience.automations } }, on: { open: probing, blocked: failing } }
+      probing: { do: { probe: { sample: $item, port: $experience.port }, for: { item: $experience.samples } }, as: results, on: { pass: marking_ok, "*": marking_bad } }
+      marking_ok: { do: { transform: { value: ok } }, as: verdict, to: reading }
+      marking_bad: { do: { transform: { value: bad } }, as: verdict, to: reading }
+      reading: { do: { memory: { read: inbox, scope: archive } }, as: inbox, on: { read: sizing, missing: sizing } }
+      sizing: { do: { signal: { log: "  📥 inbox holds ${inbox|len} request(s)" } }, to: fetching }
+      fetching: { do: { memory: { read: deliveries, scope: archive } }, as: deliveries, on: { read: counting, missing: nothing } }
+      nothing: { do: { transform: { value: [] } }, as: deliveries, to: counting }
+      counting: { do: { sense: { subject: $deliveries|len, expect: 2 } }, on: { pass: inspecting, fail: miscounted } }
+      inspecting: { do: { check_delivery: { delivery: $item }, for: { item: $deliveries } }, as: checks, on: { good: routing, "*": misdelivered } }
+      routing: { do: { check_route: { automation: $item, deliveries: $deliveries }, for: { item: $experience.automations } }, as: routes, on: { good: judging, "*": misrouted } }
+      judging: { do: { sense: { subject: $verdict, expect: ok } }, on: { pass: healthy, fail: broken } }
+      healthy: { do: { signal: { log: "  ✅ all ${experience.samples|len} samples passed · ${deliveries|len} automation(s) forwarded" } }, to: passed }
+      broken: { do: { signal: { log: "  ✘ some of ${experience.samples|len} samples failed" } }, to: failed }
+      miscounted: { do: { signal: { log: "  ✘ expected 2 deliveries, got ${deliveries|len|red}" } }, to: failed }
+      misdelivered: { do: { signal: { log: "  ✘ a delivery was not ok" } }, to: failed }
+      misrouted: { do: { signal: { log: "  ✘ an automation did not fire" } }, to: failed }
+      failing: { do: { signal: { log: "  ✘ could not open hub on port ${experience.port|red}" } }, to: dead }
+    ends: [ passed, failed, dead ]
+    fatal: [ failed, dead ]
+  automate:
+    genes: [ sense, transform, signal, memory ]
+    input: [ automation, request ]
+    lifecycle:
+      matching: { do: { sense: { subject: { method: $request.method, path: $request.path, headers: $request.headers, body: $request.body }, expect: $automation.when } }, on: { pass: rendering, fail: skipping } }
+      rendering: { do: { transform: { render: $automation.send, with: { req: { method: $request.method, path: $request.path, headers: $request.headers, body: $request.body } } } }, as: sent, on: { done: delivering, none: skipping } }
+      delivering: { do: { signal: { method: $sent.method|default:POST, url: $sent.url, headers: $sent.headers, body: $sent.body } }, as: reply, on: { received: judging, sent: judging, failed: sinking } }
+      judging: { do: { sense: { subject: $reply.status, expect: 200 } }, on: { pass: oking, fail: sinking } }
+      oking: { do: { transform: { value: true } }, as: ok, to: recording }
+      sinking: { do: { transform: { value: false } }, as: ok, to: recording }
+      recording: { do: { memory: { append: deliveries, scope: archive, keep: 200, value: { automation: $automation.name, path: $request.path, url: $sent.url, status: $reply.status|default:0, ok: $ok, body: $sent.body } } }, to: logging }
+      logging: { do: { signal: { log: "  ⚡ ${automation.name} → ${sent.url} → ${reply.status|default:0}" } }, to: delivered }
+      skipping: { do: { transform: { value: skipped } }, to: skipped }
+    ends: [ delivered, skipped ]
+  check_delivery:
+    genes: [ sense, signal ]
+    input: [ delivery ]
+    lifecycle:
+      judging: { do: { sense: { subject: $delivery.ok, expect: true } }, on: { pass: noting, fail: moaning } }
+      noting: { do: { signal: { log: "  📤 ${delivery.automation} → ${delivery.url} ${delivery.status|green} ${delivery.body|json}" } }, to: good }
+      moaning: { do: { signal: { log: "  ✘ ${delivery.automation} → ${delivery.url} ${delivery.status|red} ${delivery.body|json}" } }, to: bad }
+    ends: [ good, bad ]
+  check_route:
+    genes: [ transform, signal ]
+    input: [ automation, deliveries ]
+    lifecycle:
+      finding: { do: { transform: { find: $deliveries, where: { automation: $automation.name } } }, as: hit, on: { done: cheering, none: booing } }
+      cheering: { do: { signal: { log: "  ✔ ${automation.name} fired → ${hit.url}" } }, to: good }
+      booing: { do: { signal: { log: "  ✘ ${automation.name|red} never fired" } }, to: bad }
+    ends: [ good, bad ]
+  swap_automation:
+    genes: [ sense, transform ]
+    input: [ current, name, when, send ]
+    lifecycle:
+      matching: { do: { sense: { subject: $current.name, expect: $name } }, on: { pass: replacing, fail: keeping } }
+      replacing: { do: { transform: { value: { name: $name, when: $when, send: $send } } }, as: out, to: done }
+      keeping: { do: { transform: { value: $current } }, as: out, to: done }
+    ends: [ done ]
+    output: $out
+  ui_inbox:
+    genes: [ memory, transform ]
+    input: [ experience ]
+    lifecycle:
+      loading: { do: { memory: { read: inbox, scope: archive } }, as: inbox, on: { read: shaping, missing: emptying } }
+      emptying: { do: { transform: { value: [] } }, as: inbox, to: shaping }
+      shaping: { do: { transform: { value: { count: $inbox|len, requests: $inbox|reverse } } }, as: out, to: shown }
+    ends: [ shown ]
+    output: $out
+    skin:
+      title: Inbox
+      icon: 📥
+      about: Every request the hub has caught, newest first.
+      action: Refresh
+      auto: true
+      summary: ${count} request(s) caught · newest first
+      badge: count
+      fields: {}
+      show:
+        - label: Requests
+          path: requests
+          as: table
+          columns: { Method: method, Path: path, Body: body }
+  ui_automations:
+    genes: [ memory, transform, sense, signal ]
+    cells: [ swap_automation ]
+    input: [ experience, name, when, send ]
+    lifecycle:
+      gating_name: { do: { transform: { value: "$name|default:" } }, on: { done: gating_when, none: listing } }
+      gating_when: { do: { transform: { value: "$when|default:" } }, on: { done: gating_send, none: listing } }
+      gating_send: { do: { transform: { value: "$send|default:" } }, on: { done: loading, none: listing } }
+      loading: { do: { memory: { read: automations, scope: archive } }, as: known, on: { read: finding, missing: appending } }
+      finding: { do: { transform: { find: $known, where: { name: $name } } }, as: hit, on: { done: replacing, none: appending } }
+      replacing: { do: { swap_automation: { current: $item, name: $name, when: $when, send: $send }, for: { item: $known } }, as: updated, on: { "*": storing } }
+      storing: { do: { memory: { write: automations, scope: archive, value: $updated } }, to: noting }
+      appending: { do: { memory: { append: automations, scope: archive, keep: 100, value: { name: $name, when: $when, send: $send } } }, to: noting }
+      noting: { do: { signal: { log: "  🧩 automation saved: ${name}" } }, to: listing }
+      listing: { do: { memory: { read: automations, scope: archive } }, as: list, on: { read: shaping, missing: nothing } }
+      nothing: { do: { transform: { value: [] } }, as: list, to: shaping }
+      shaping: { do: { transform: { value: { count: $list|len, automations: $list } } }, as: out, to: shown }
+    ends: [ shown ]
+    output: $out
+    skin:
+      title: Automations
+      icon: 🧩
+      about: The rules that forward a matching webhook somewhere else.
+      action: Save automation
+      auto: true
+      summary: ${count} automation(s) armed
+      badge: count
+      fields:
+        name: { widget: text, label: Name, placeholder: PR opened → chat, span: 12 }
+        when: { widget: json, label: When (match), span: 6 }
+        send: { widget: json, label: Send (request), span: 6 }
+      show:
+        - label: Automations
+          path: automations
+          as: table
+          columns: { Name: name, When: when, Send: send.url }
+  ui_test:
+    genes: [ signal, memory, transform ]
+    input: [ experience, path, body ]
+    lifecycle:
+      posting: { do: { signal: { method: POST, url: "http://localhost:${experience.port}${path}", body: $body } }, as: reply, on: { received: fetching, sent: fetching, failed: fetching } }
+      fetching: { do: { memory: { read: deliveries, scope: archive } }, as: deliveries, on: { read: shaping, missing: nothing } }
+      nothing: { do: { transform: { value: [] } }, as: deliveries, to: shaping }
+      shaping: { do: { transform: { value: { status: $reply.status|default:0, reply: $reply.body, error: "$reply.error|default:", deliveries: $deliveries|reverse } } }, as: out, to: shown }
+    ends: [ shown ]
+    output: $out
+    skin:
+      title: Test webhook
+      icon: 🧪
+      about: Fire a handmade webhook at the hub and watch what it triggers.
+      action: Send webhook
+      summary: hub replied ${status} · ${deliveries|len} delivery(ies)
+      badge: status
+      good: [ 200 ]
+      fields:
+        path: { widget: text, label: Path, default: /hooks/github, span: 12 }
+        body: { widget: json, label: Body, span: 12 }
+      show:
+        - label: Hub reply
+          path: reply
+          as: json
+        - label: Deliveries
+          path: deliveries
+          as: table
+          columns: { Automation: automation, URL: url, Status: status, OK: ok, Body: body }
+  ui_deliveries:
+    genes: [ memory, transform ]
+    input: [ experience ]
+    lifecycle:
+      loading: { do: { memory: { read: deliveries, scope: archive } }, as: deliveries, on: { read: shaping, missing: emptying } }
+      emptying: { do: { transform: { value: [] } }, as: deliveries, to: shaping }
+      shaping: { do: { transform: { value: { count: $deliveries|len, deliveries: $deliveries|reverse } } }, as: out, to: shown }
+    ends: [ shown ]
+    output: $out
+    skin:
+      title: Deliveries
+      icon: 📤
+      about: Everything the automations have forwarded onward, newest first.
+      action: Refresh
+      auto: true
+      summary: ${count} delivery(ies) forwarded · newest first
+      badge: count
+      fields: {}
+      show:
+        - label: Deliveries
+          path: deliveries
+          as: table
+          columns: { Automation: automation, URL: url, Status: status, OK: ok, Body: body }
+  studio_root:
+    genes: [ signal, trigger ]
+    cells: [ hub, ui_inbox, ui_automations, ui_test, ui_deliveries, ui_evolve ]
+    input: [ experience, model, api, trial, phenotype ]
+    lifecycle:
+      opening: { do: { hub: { port: $experience.port, automations: $experience.automations } }, on: { open: announcing, blocked: failing } }
+      announcing: { do: { signal: { log: "  🪝 webhook inspector listening at http://localhost:${experience.port}/ (any method, any path)" } }, to: skinning }
+      skinning:
+        do:
+          trigger:
+            on: ui
+            port: 4101
+            title: Hub
+            with:
+              experience: $experience
+              model: $model
+              api: $api
+              trial: $trial
+              phenotype: $phenotype
+            expose: [ ui_inbox, ui_automations, ui_test, ui_deliveries, ui_evolve ]
+        on:
+          listening: opened
+          failed: busy
+      opened: { do: { signal: { log: "  🖥 studio open at http://localhost:4101/" } }, to: serving }
+      busy: { do: { signal: { log: "  ✘ studio port 4101 is busy" } }, to: dead }
+      failing: { do: { signal: { log: "  ✘ port ${experience.port|red} is busy" } }, to: dead }
+    ends: [ serving, dead ]
+    fatal: [ dead ]
+  ui_evolve:
+    genes: [ transform ]
+    cells: [ mind ]
+    input: [ experience, intent, model, api, trial, phenotype ]
+    lifecycle:
+      gating: { do: { transform: { value: "$intent|default:" } }, on: { done: thinking, none: idling } }
+      idling: { do: { transform: { value: { version: "", file: "", errors: [ "describe a change above, then press Evolve" ] } } }, as: out, to: shown }
+      thinking: { do: { mind: { intent: $intent, model: $model, api: $api, trial: $trial, phenotype: $phenotype, experience: $experience } }, as: child, on: { evolved: shaping_ok, "*": shaping_bad } }
+      shaping_ok: { do: { transform: { value: { version: "$child.version|default:", file: "$child.file|default:", errors: [] } } }, as: out, to: shown }
+      shaping_bad: { do: { transform: { value: "$child.errors|default:" } }, as: errs, on: { done: bad_out, none: no_errs } }
+      no_errs: { do: { transform: { value: [ the mind produced no usable DNA ] } }, as: errs, to: bad_out }
+      bad_out: { do: { transform: { value: { version: "", file: "", errors: $errs } } }, as: out, to: shown }
+    ends: [ shown ]
+    output: $out
+    skin:
+      title: Evolve
+      icon: 🧬
+      about: Describe a change; the hub writes its own DNA, tests it and saves a new version.
+      action: Evolve
+      summary: ${version|default:—} ${file|dim} ${errors|join:; }
+      badge: version
+      fields:
+        intent: { widget: textarea, label: Intent, placeholder: add a screen that ..., span: 12 }
+      show:
+        - label: Errors
+          path: errors
+          as: json
+phenotypes:
+  evolve: { grow: mind, with: { intent: (pass --with intent=...), model: claude-opus-5, api: https://api.anthropic.com/v1/messages, trial: experience.yaml, phenotype: selftest } }
+  serve: { grow: serve_root, persist: true }
+  selftest: { grow: selftest_root }
+  studio: { grow: studio_root, with: { model: claude-opus-5, api: https://api.anthropic.com/v1/messages, trial: experience.yaml, phenotype: selftest }, persist: true }
+active_phenotype: evolve

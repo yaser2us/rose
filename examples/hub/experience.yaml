@@ -1,4 +1,4 @@
-# Experience for the hub species (a Zapier-like webhook automation hub).
+# Experience for the hub: its port, sample webhooks for the self-test, and starting automations.
 name: hub-selftest
 port: 4100
 samples:                      # webhooks the self-test fires at the hub

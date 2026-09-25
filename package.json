@@ -1,6 +1,6 @@
 {
   "name": "organism",
-  "version": "0.3.0",
+  "version": "0.6.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -10,7 +10,17 @@
     "strict": "tsx --env-file-if-exists=.env ribosome.ts postman.genome.yaml collection.yaml --strict",
     "rehearse": "tsx --env-file-if-exists=.env ribosome.ts postman.genome.yaml rehearsal.yaml --phenotype rehearse",
     "studio": "tsx --env-file-if-exists=.env ribosome.ts postman.genome.yaml collection.yaml --phenotype studio",
-    "evolve": "tsx --env-file-if-exists=.env ribosome.ts postman.genome.yaml collection.yaml --phenotype evolve"
+    "evolve": "tsx --env-file-if-exists=.env ribosome.ts postman.genome.yaml collection.yaml --phenotype evolve",
+    "hello": "tsx --env-file-if-exists=.env ribosome.ts examples/hello/genome.yaml examples/hello/experience.yaml",
+    "hello:studio": "tsx --env-file-if-exists=.env ribosome.ts examples/hello/genome.yaml examples/hello/experience.yaml --phenotype studio",
+    "hub:test": "tsx --env-file-if-exists=.env ribosome.ts examples/hub/genome.yaml examples/hub/experience.yaml --phenotype selftest",
+    "hub:studio": "tsx --env-file-if-exists=.env ribosome.ts examples/hub/genome.yaml examples/hub/experience.yaml --phenotype studio"
   },
-  "dependencies": { "tsx": "^4.19.0", "yaml": "^2.5.0" }
+  "dependencies": {
+    "tsx": "^4.19.0",
+    "yaml": "^2.5.0"
+  },
+  "engines": {
+    "node": ">=22.9"
+  }
 }

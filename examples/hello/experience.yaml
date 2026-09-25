@@ -1,0 +1,4 @@
+# The data an organism grows against. Roots receive it as the input `experience`.
+name: hello-demo
+port: 4300
+names: [Ada, Linus, Grace]

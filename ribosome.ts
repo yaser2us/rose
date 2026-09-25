@@ -171,7 +171,7 @@ function chemistry(org: Organism): Record<string, (a: any) => Reaction | Promise
       const t0 = performance.now();
       try {
         const h = body !== undefined ? { "content-type": "application/json", ...headers } : headers;
-        const res = await fetch(url, { method, headers: h, body: body !== undefined ? JSON.stringify(body) : undefined });
+        const res = await fetch(org.route(url), { method, headers: h, body: body !== undefined ? JSON.stringify(body) : undefined });
         const text = await res.text();
         let json: any;
         if (String(res.headers.get("content-type")).includes("text/event-stream"))   // SSE → [{event, data}]
@@ -251,8 +251,7 @@ function chemistry(org: Organism): Record<string, (a: any) => Reaction | Promise
           } catch (e: any) { s.writeHead(500, { "content-type": "application/json" }).end(JSON.stringify({ error: e.message })); }
         });
       });
-      server.on("error", (e: any) => ok({ event: "failed", output: { error: e.code ?? e.message } }));
-      server.listen(a.port, () => { org.listeners.push(() => server.close()); ok({ event: "listening", output: { port: a.port } }); });
+      org.listen(server, a.port, undefined, ok);
     }),
 
     grow: (a) => org.growChild(a),
@@ -416,7 +415,29 @@ class Organism {
   chem = chemistry(this);
   listeners: (() => void)[] = [];
   constructor(public genome: any, public memory: Memory, public budget: Budget,
-              public depth: number, public prefix: string, public dir: string) {}
+              public depth: number, public prefix: string, public dir: string,
+              public home: string, public ports?: Map<number, number>) {}
+
+  /** A trial lives in its own little network: its servers take free ports, and its own
+   *  traffic to localhost:<declared port> is routed to them, never to a running parent. */
+  route(url: string) {
+    if (!this.ports || typeof url !== "string") return url;
+    try {
+      const u = new URL(url);
+      const mapped = this.ports.get(+u.port);
+      if (mapped && ["localhost", "127.0.0.1", "[::1]"].includes(u.hostname)) { u.port = String(mapped); return u.toString(); }
+    } catch {}
+    return url;
+  }
+  listen(server: http.Server, want: number, host: string | undefined, done: (r: Reaction) => void) {
+    server.on("error", (e: any) => done({ event: "failed", output: { error: e.code ?? e.message } }));
+    server.listen(this.ports ? 0 : want, host, () => {
+      const got = (server.address() as any).port;
+      this.ports?.set(+want, got);
+      this.listeners.push(() => server.close());
+      done({ event: "listening", output: { port: want, bound: got } });
+    });
+  }
 
   flush = () => {};
   private pending?: NodeJS.Timeout;
@@ -528,7 +549,9 @@ class Organism {
 
     try {
       const r = await birth(child, {
-        phenotype: a.phenotype, experience: a.experience, with: a.with, depth: this.depth + 1,
+        phenotype: a.phenotype, with: a.with, depth: this.depth + 1,
+        experience: typeof a.experience === "string" && !path.isAbsolute(a.experience) && !fs.existsSync(a.experience)
+          ? path.join(this.home, a.experience) : a.experience,
         prefix: this.prefix + c.d("  │ "), budget: { spent: 0, max: this.budget.max - this.budget.spent }, trial: true,
       });
       this.budget.spent += r.spent;
@@ -582,15 +605,14 @@ function serveSkin(org: Organism, a: any): Promise<Reaction> {
             const r = await VOICE.run(log, () => org.run(m[1], { ...(a.with ?? {}), ...inputs }));
             org.flush();
             const view = { ...(isMap(r.output) ? r.output : { output: r.output }), state: r.state, trail: r.trail };
-            const summary = def.skin?.summary !== undefined ? evaluate(def.skin.summary, view) : undefined;
+            const summary = def.skin?.summary !== undefined ? strip(String(evaluate(def.skin.summary, view) ?? "")) : undefined;
             return send(200, { state: r.state, trail: r.trail, output: r.output, summary, log: log.map(strip), genome: meta().genome });
           } catch (e: any) { return send(500, { error: e.message, log: log.map(strip) }); }
         }
         send(404, { error: "no such route" });
       });
     });
-    server.on("error", (e: any) => ok({ event: "failed", output: { error: e.code ?? e.message } }));
-    server.listen(a.port, "127.0.0.1", () => { org.listeners.push(() => server.close()); ok({ event: "listening", output: { port: a.port } }); });
+    org.listen(server, a.port, "127.0.0.1", ok);
   });
 }
 
@@ -735,7 +757,8 @@ async function birth(genome: any, o: BirthOpts) {
 
   const budget = o.budget ?? { spent: 0, max: Infinity };
   budget.max = Math.min(budget.max, genome.action?.budget?.max_requests ?? Infinity);
-  const org = new Organism(genome, new Memory(genome.body?.recall ?? [], seed), budget, o.depth, o.prefix, dir);
+  const org = new Organism(genome, new Memory(genome.body?.recall ?? [], seed), budget, o.depth, o.prefix, dir,
+                           path.dirname(expPath ?? "."), o.trial ? new Map() : undefined);
 
   org.say(`\n🧬 genome ${genome.genome.name} v${lock.version}  →  phenotype ${c.y(phenoName)}`);
   org.say(c.d(`  ✔ laws of physics hold (${Object.keys(genome.genes).length} genes · ${Object.keys(genome.cells).length} cells)`));

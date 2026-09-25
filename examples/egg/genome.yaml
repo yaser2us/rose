@@ -1,5 +1,7 @@
-# 🥚 the egg: physics + a mind, and nothing else. Every app feature must be grown.
-genome: { name: hub, version: 0.1.0 }
+# 🥚 the egg: physics + a mind, and nothing else. Every feature of your app must be grown.
+# Rename genome.name, edit experience.yaml, then:
+#   npx tsx --env-file-if-exists=.env ribosome.ts examples/egg/genome.yaml examples/egg/experience.yaml --phenotype evolve --with intent="..."
+genome: { name: app, version: 0.1.0 }
 genes:
   signal: { params: [ method, url, headers, body, log ], emits: [ received, failed, sent ] }
   memory: { params: [ write, value, scope, write_all, read, fill, append, keep ], emits: [ written, read, missing ] }
@@ -129,5 +131,5 @@ cells:
     fatal: [ extinct, confused ]
     output: $child
 phenotypes:
-  evolve: { grow: mind, with: { intent: "(pass --with intent=...)", model: claude-opus-5, api: "https://api.anthropic.com/v1/messages", trial: hub.yaml, phenotype: selftest } }
+  evolve: { grow: mind, with: { intent: "(pass --with intent=...)", model: claude-opus-5, api: "https://api.anthropic.com/v1/messages", trial: experience.yaml, phenotype: selftest } }
 active_phenotype: evolve

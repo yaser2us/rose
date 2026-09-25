@@ -24,6 +24,11 @@ ribosome.ts           the kernel: generic interpreter + laws. No feature code, e
 postman.genome.yaml   the seed DNA (the hand-written egg)
 collection.yaml       an experience: variables, auth, mocks, steps (runs offline)
 rehearsal.yaml        an experience where a mock plays the LLM, for offline mind tests
+README.md             quick start for humans; ARCHITECTURE.md: full design
+examples/
+  hello/              hand-written starter (no LLM), the language in ~60 lines
+  egg/                genes + mind only: grow any app from intents
+  hub/                Zapier-like webhook hub the mind grew from egg/ (a second species)
 .organism/            generated, gitignored:
   <exp>.lock.json       learned memory ("bones"), version, lineage
   genomes/*.yaml        genomes the organism grew (delete a file to undo it)
@@ -38,6 +43,8 @@ npm run mock       # phenotype mock_server (keeps serving)
 npm run strict     # grow, but first prove the kernel mentions no genome-defined name
 npm run rehearse   # the mind grows a child genome offline (a mock plays the LLM)
 npm run studio     # the grown UI at http://localhost:4000 (needs a genome with a `studio` phenotype)
+npm run hello      # examples/hello (hello:studio → :4300)
+npm run hub:test   # examples/hub self-test (hub:studio → :4101, webhooks on :4100)
 npx tsx ribosome.ts --adopt .organism/genomes/<child>.yaml postman.genome.yaml   # make a child the seed
 npm run evolve -- --with intent="add a history of every request"
 npx tsx ribosome.ts .organism/genomes/postman-0.4.0.yaml collection.yaml   # run a grown child
@@ -138,6 +145,8 @@ A literal (deep equality), `exists`, `type:string|number|boolean|object|array|nu
 - `grow`, `load` and `mock` give the same results as the old hand-coded engine.
 - Learning (auto type-assertions after 3 stable runs) works.
 - `--strict` passes: there is no `fire()`, no `ORGAN_FOLDS`, and no cell name in the kernel.
+- **Second species:** `examples/hub` was grown from `examples/egg` (genes + mind only) in 5 intents. See ARCHITECTURE.md §13.
+- **Isolated trials:** a trial birth gets its own port namespace (free ports, with its localhost traffic routed to them), so Evolve works inside a running app. The hub grew `0.4.3` from its own Evolve screen while live.
 - Offline self-growth: `rehearse` grows `postman@0.4.0` with a new `history` cell. That child can run directly and can grow `0.5.0` itself.
 - Broken DNA is rejected with precise errors, and the mind retries using those errors as feedback.
 - **Real self-growth (verified 2026-09-24):** `npm run evolve` with a "history" intent got a valid delta from `claude-opus-5` on the first attempt, in about 30s. It added the `historian` and `record_exchange` cells, and changed `http_call` to expose its request. The child ran with real exchanges archived. No human wrote any YAML or TypeScript for it.
